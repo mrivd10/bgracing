@@ -4,13 +4,13 @@ import random
 
 # Define the RRT algorithm
 class Node:
-    def init(self, x, y):
+    def _init_(self, x, y):
         self.x = x
         self.y = y
         self.parent = None
 
 class RRT:
-    def init(self, start, goal, boundaries, max_iter=500, step_size=0.5):
+    def _init_(self, start, goal, boundaries, max_iter=500, step_size=0.5):
         self.start = Node(*start)
         self.goal = Node(*goal)
         self.boundaries = boundaries
@@ -83,7 +83,7 @@ start = (np.mean(left_cones['x']), np.mean(left_cones['y']))  # Start near the l
 goal = (np.mean(right_cones['x']), np.mean(right_cones['y']))  # Goal near the right boundary
 
 # Build the RRT and get the path
-rrt = RRT.init(start, goal, boundaries, max_iter=1000, step_size=0.5)
+rrt = RRT._init_(start, goal, boundaries, max_iter=1000, step_size=0.5)
 rrt.build()
 path = rrt.get_path()
 
