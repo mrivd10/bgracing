@@ -1,101 +1,126 @@
-import matplotlib.pyplot as plt
-import numpy as np
-import random
-
-# Define the RRT algorithm
-class Node:
-    def _init_(self, x, y):
-        self.x = x
-        self.y = y
-        self.parent = None
-
-class RRT:
-    def _init_(self, start, goal, boundaries, max_iter=500, step_size=0.5):
-        self.start = Node(*start)
-        self.goal = Node(*goal)
-        self.boundaries = boundaries
-        self.max_iter = max_iter
-        self.step_size = step_size
-        self.tree = [self.start]
-
-    
-
-    def distance(self, node1, node2):
-        return np.sqrt((node1.x - node2.x)*2 + (node1.y - node2.y)*2)
-
-    def get_random_point(self):
-        x_min, x_max, y_min, y_max = self.boundaries
-        return random.uniform(x_min, x_max), random.uniform(y_min, y_max)
-
-    def nearest_node(self, random_point):
-        return min(self.tree, key=lambda node: self.distance(node, Node(*random_point)))
-
-    def steer(self, from_node, to_point):
-        angle = np.arctan2(to_point[1] - from_node.y, to_point[0] - from_node.x)
-        new_x = from_node.x + self.step_size * np.cos(angle)
-        new_y = from_node.y + self.step_size * np.sin(angle)
-        return Node(new_x, new_y)
-
-    def is_valid(self, node):
-        x_min, x_max, y_min, y_max = self.boundaries
-        return x_min <= node.x <= x_max and y_min <= node.y <= y_max
-
-    def build(self):
-        for _ in range(self.max_iter):
-            rand_point = self.get_random_point()
-            nearest = self.nearest_node(rand_point)
-            new_node = self.steer(nearest, rand_point)
-
-            if self.is_valid(new_node):
-                new_node.parent = nearest
-                self.tree.append(new_node)
-
-                if self.distance(new_node, self.goal) < self.step_size:
-                    self.goal.parent = new_node
-                    self.tree.append(self.goal)
-                    break
-
-    def get_path(self):
-        path = []
-        current = self.goal
-        while current is not None:
-            path.append((current.x, current.y))
-            current = current.parent
-        return path[::-1]
-
-# Load cone positions
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
 
-file_path = 'BrandsHatchLayout.csv'  # Replace with your file path
-data = pd.read_csv(file_path)
+file_path = 'BrandsHatchLayout.csv'
+data = pd.read_csv(file_path).dropna()
 
-# Separate left and right cones
 left_cones = data[data['side'] == 'left']
 right_cones = data[data['side'] == 'right']
 
-# Define track boundaries (bounding box around cones)
-x_min, x_max = min(data['x']), max(data['x'])
-y_min, y_max = min(data['y']), max(data['y'])
-boundaries = (x_min, x_max, y_min, y_max)
+def generate_centerline(left_x, left_y, right_x, right_y):
+    """
+    Generate the centerline of the track by averaging the positions of left and right cones.
+    
+    Parameters:
+    - left_x, left_y: Coordinates of the left cones.
+    - right_x, right_y: Coordinates of the right cones.
+    
+    Returns:
+    - center_x, center_y: Coordinates of the centerline.
+    """
+    center_x = (left_x + right_x) / 2
+    center_y = (left_y + right_y) / 2
+    return center_x, center_y
 
-# RRT parameters
-start = (np.mean(left_cones['x']), np.mean(left_cones['y']))  # Start near the left boundary
-goal = (np.mean(right_cones['x']), np.mean(right_cones['y']))  # Goal near the right boundary
+def calculate_curvature(x, y):
+    """
+    Calculate the curvature of the track centerline using the formula:
+    k = |x''y' - y''x'| / (x'^2 + y'^2)^(3/2)
+    
+    Parameters:
+    - x, y: Coordinates of the centerline.
+    
+    Returns:
+    - curvature: Array of curvature values along the centerline.
+    """
+    dx = np.gradient(x)
+    dy = np.gradient(y)
+    ddx = np.gradient(dx)
+    ddy = np.gradient(dy)
+    curvature = np.abs(ddx * dy - dx * ddy) / (dx**2 + dy**2)**1.5
+    curvature[np.isnan(curvature)] = 0
+    return curvature
 
-# Build the RRT and get the path
-rrt = RRT._init_(start, goal, boundaries, max_iter=1000, step_size=0.5)
-rrt.build()
-path = rrt.get_path()
+def find_fastest_racing_line(center_x, center_y, curvature, track_width, max_velocity, max_lateral_acceleration):
+    """
+    Use dynamic programming to find the fastest racing line.
+    
+    Parameters:
+    - center_x, center_y: Coordinates of the track centerline.
+    - curvature: Curvature values of the centerline.
+    - track_width: Discretized width of the track.
+    - max_velocity: Maximum velocity of the vehicle (m/s).
+    - max_lateral_acceleration: Maximum lateral acceleration (m/s²).
+    
+    Returns:
+    - optimal_path: Optimal racing line as a list of indices.
+    """
+    track_length = len(center_x)
+    dp_cost = np.full((track_length, track_width), np.inf)
+    dp_path = np.zeros((track_length, track_width), dtype=int)  
+    
+    dp_cost[-1, :] = 0
 
-# Plot the results
-plt.figure(figsize=(10, 6))
-plt.scatter(left_cones['x'], left_cones['y'], c='red', label='Left Boundary')
-plt.scatter(right_cones['x'], right_cones['y'], c='blue', label='Right Boundary')
-plt.plot([p[0] for p in path], [p[1] for p in path], 'k-', linewidth=2, label='Optimal Racing Line')
-plt.xlabel('X')
-plt.ylabel('Y')
-plt.title('RRT-based Optimal Racing Line')
-plt.legend()
-plt.axis('equal')
-plt.grid()
-plt.show()
+    for i in range(track_length - 2, -1, -1):
+        for j in range(track_width):
+            for k in range(track_width):
+                distance = np.sqrt((center_x[i+1] - center_x[i])**2 + ((j - k) / track_width)**2)
+                velocity = min(max_velocity, np.sqrt(max_lateral_acceleration / curvature[i]) if curvature[i] > 0 else max_velocity)
+                time = distance / velocity
+                
+                cost = dp_cost[i+1, k] + time
+                if cost < dp_cost[i, j]:
+                    dp_cost[i, j] = cost
+                    dp_path[i, j] = k
+
+    optimal_path = []
+    current = np.argmin(dp_cost[0, :]) 
+    for i in range(track_length):
+        optimal_path.append(current)
+        current = dp_path[i, current]
+    
+    return optimal_path
+
+def visualize_racing_line(center_x, center_y, left_x, left_y, right_x, right_y, optimal_path, track_width):
+    """
+    Visualize the cones, centerline, and fastest racing line.
+    
+    Parameters:
+    - center_x, center_y: Coordinates of the track centerline.
+    - left_x, left_y: Coordinates of the left cones.
+    - right_x, right_y: Coordinates of the right cones.
+    - optimal_path: Optimal racing line as a list of indices.
+    - track_width: Discretized width of the track.
+    """
+    plt.figure(figsize=(12, 8))
+    plt.plot(left_x, left_y, label="Left Cones", color="blue")
+    plt.plot(right_x, right_y, label="Right Cones", color="green")
+    plt.plot(center_x, center_y, label="Centerline", color="gray", linestyle="--")
+    
+    racing_line_x = center_x
+    racing_line_y = [center_y[i] + (path - track_width // 2) * (right_y[i] - left_y[i]) / track_width for i, path in enumerate(optimal_path)]
+    plt.plot(racing_line_x, racing_line_y, label="Fastest Racing Line", color="red")
+    
+    plt.title("Fastest Racing Line - Dynamic Programming")
+    plt.xlabel("X")
+    plt.ylabel("Y")
+    plt.legend()
+    plt.grid()
+    plt.show()
+
+# Main
+left_x, left_y = left_cones['x'].values, left_cones['y'].values
+right_x, right_y = right_cones['x'].values, right_cones['y'].values
+
+center_x, center_y = generate_centerline(left_x, left_y, right_x, right_y)
+
+curvature = calculate_curvature(center_x, center_y)
+
+# settings:
+track_width = 10  # resolution
+max_velocity = 50  # Max Speed(m/s)
+max_lateral_acceleration = 10  # Maxi acceleration(m/s²)
+optimal_path = find_fastest_racing_line(center_x, center_y, curvature, track_width, max_velocity, max_lateral_acceleration)
+
+visualize_racing_line(center_x, center_y, left_x, left_y, right_x, right_y, optimal_path, track_width)
