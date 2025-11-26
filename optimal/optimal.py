@@ -38,16 +38,29 @@ def calculate_curvature(x, y):
     dy = np.gradient(y)
     ddx = np.gradient(dx)
     ddy = np.gradient(dy)
-    curvature = np.abs(ddx * dy - dx * ddy) / (dx**2 + dy**2)**1.5
-    curvature[np.isnan(curvature)] = 0
+    curvature = np.abs(ddx * dy - dx * ddy) / (dx**2 + dy**2) ** 1.5
+    curvature[~np.isfinite(curvature)] = 0
     return curvature
 
-def find_fastest_racing_line(center_x, center_y, curvature, track_width, max_velocity, max_lateral_acceleration):
+def find_fastest_racing_line(
+    center_x,
+    center_y,
+    curvature,
+    left_x,
+    left_y,
+    right_x,
+    right_y,
+    track_width,
+    max_velocity,
+    max_lateral_acceleration,
+):
     """
     Use dynamic programming to find the fastest racing line.
-    
+
     Parameters:
     - center_x, center_y: Coordinates of the track centerline.
+    - left_x, left_y: Coordinates of the left cones.
+    - right_x, right_y: Coordinates of the right cones.
     - curvature: Curvature values of the centerline.
     - track_width: Discretized width of the track.
     - max_velocity: Maximum velocity of the vehicle (m/s).
@@ -56,30 +69,53 @@ def find_fastest_racing_line(center_x, center_y, curvature, track_width, max_vel
     Returns:
     - optimal_path: Optimal racing line as a list of indices.
     """
+    # Notes:
+    # - track_width represents the discretization resolution across the lane; a higher
+    #   value yields finer lateral steps at the cost of computation time.
+    # - offset_fraction converts a discrete step into a symmetric lateral fraction, so
+    #   j = track_width // 2 follows the centerline while the extremes trace the edges.
+    # - allowable_velocity uses a curvature floor to avoid division-by-zero and ensures
+    #   the dynamic-programming cost stays physically meaningful.
     track_length = len(center_x)
     dp_cost = np.full((track_length, track_width), np.inf)
-    dp_path = np.zeros((track_length, track_width), dtype=int)  
-    
+    dp_path = np.zeros((track_length, track_width), dtype=int)
+
+    def offset_fraction(index: int) -> float:
+        return (index - track_width // 2) / track_width
+
     dp_cost[-1, :] = 0
 
     for i in range(track_length - 2, -1, -1):
         for j in range(track_width):
+            current_offset = offset_fraction(j)
+            current_x = center_x[i] + current_offset * (right_x[i] - left_x[i])
+            current_y = center_y[i] + current_offset * (right_y[i] - left_y[i])
+
+            curvature_safe = max(curvature[i], 1e-6)
+            allowable_velocity = min(
+                max_velocity,
+                np.sqrt(max_lateral_acceleration / curvature_safe),
+            )
+
             for k in range(track_width):
-                distance = np.sqrt((center_x[i+1] - center_x[i])**2 + ((j - k) / track_width)**2)
-                velocity = min(max_velocity, np.sqrt(max_lateral_acceleration / curvature[i]) if curvature[i] > 0 else max_velocity)
-                time = distance / velocity
-                
-                cost = dp_cost[i+1, k] + time
+                next_offset = offset_fraction(k)
+                next_x = center_x[i + 1] + next_offset * (right_x[i + 1] - left_x[i + 1])
+                next_y = center_y[i + 1] + next_offset * (right_y[i + 1] - left_y[i + 1])
+
+                distance = np.hypot(next_x - current_x, next_y - current_y)
+                time = distance / allowable_velocity
+
+                cost = dp_cost[i + 1, k] + time
                 if cost < dp_cost[i, j]:
                     dp_cost[i, j] = cost
                     dp_path[i, j] = k
 
     optimal_path = []
-    current = np.argmin(dp_cost[0, :]) 
+    current = np.argmin(dp_cost[0, :])
     for i in range(track_length):
         optimal_path.append(current)
         current = dp_path[i, current]
-    
+
     return optimal_path
 
 def visualize_racing_line(center_x, center_y, left_x, left_y, right_x, right_y, optimal_path, track_width):
@@ -98,8 +134,17 @@ def visualize_racing_line(center_x, center_y, left_x, left_y, right_x, right_y, 
     plt.plot(right_x, right_y, label="Right Cones", color="green")
     plt.plot(center_x, center_y, label="Centerline", color="gray", linestyle="--")
     
-    racing_line_x = center_x
-    racing_line_y = [center_y[i] + (path - track_width // 2) * (right_y[i] - left_y[i]) / track_width for i, path in enumerate(optimal_path)]
+    def offset_fraction(index: int) -> float:
+        return (index - track_width // 2) / track_width
+
+    racing_line_x = [
+        center_x[i] + offset_fraction(path) * (right_x[i] - left_x[i])
+        for i, path in enumerate(optimal_path)
+    ]
+    racing_line_y = [
+        center_y[i] + offset_fraction(path) * (right_y[i] - left_y[i])
+        for i, path in enumerate(optimal_path)
+    ]
     plt.plot(racing_line_x, racing_line_y, label="Fastest Racing Line", color="red")
     
     plt.title("Fastest Racing Line - Dynamic Programming")
@@ -121,6 +166,17 @@ curvature = calculate_curvature(center_x, center_y)
 track_width = 10  # resolution
 max_velocity = 50  # Max Speed(m/s)
 max_lateral_acceleration = 10  # Maxi acceleration(m/s²)
-optimal_path = find_fastest_racing_line(center_x, center_y, curvature, track_width, max_velocity, max_lateral_acceleration)
+optimal_path = find_fastest_racing_line(
+    center_x,
+    center_y,
+    curvature,
+    left_x,
+    left_y,
+    right_x,
+    right_y,
+    track_width,
+    max_velocity,
+    max_lateral_acceleration,
+)
 
 visualize_racing_line(center_x, center_y, left_x, left_y, right_x, right_y, optimal_path, track_width)
