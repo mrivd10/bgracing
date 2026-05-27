@@ -1,22 +1,20 @@
-# bgracing
+# Racing Line Optimizer
 
-line_racing_optimized_route
-input:
-two lines of cones left and right
-the lines described as (latitude, longtitude, position) \\coordinates, and Left/Right role
-given in CVS file
+A Python tool for calculating an optimized racing line through a cone-defined track.
 
-output:
-the most optimized route between the cones
+## Problem
+Given left/right cone boundaries as coordinate points, the program estimates an efficient driving trajectory through the track.
 
-the code needs to be written in PY
-think about using the OMPL
+## Features
+- Reads cone data from CSV
+- Separates left/right track boundaries
+- Computes an optimized route
+- Visualizes the result using Matplotlib
 
-need help for using this library and making 2D model of the solution.
+## Tech Stack
+Python, NumPy, Pandas, SciPy, Matplotlib
 
-## Instructions
-
+## Run
 ```bash
-pip install pandas numpy matplotlib scipy
+pip install -r requirements.txt
 python bgracing.py
-```
