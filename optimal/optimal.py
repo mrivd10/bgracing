@@ -481,6 +481,26 @@ def longitudinal_limits(speed: Array, curvature: Array, gradient: Array,
 
 # 4. Track processing and racing-line generation
 
+def interpolate_boundary(points: Array, resolution: int, closed: bool) -> Array:
+    """Shape-preserving PCHIP in arc length; cyclic padding matches the seam."""
+    points = np.asarray(points, float)
+    if points.ndim != 2 or points.shape[1] != 2 or len(points) < 4 or not np.all(np.isfinite(points)):
+        raise ValueError("A boundary needs at least four finite XY points")
+    if np.linalg.norm(points[-1]-points[0]) < EPS:
+        points = points[:-1]
+    if closed:
+        padded = np.vstack((points[-3:], points, points[:3]))
+        arc = np.r_[0., np.cumsum(np.linalg.norm(np.diff(padded, axis=0), axis=1))]
+        start, finish = arc[3], arc[len(points)+3]
+    else:
+        padded = points
+        arc = np.r_[0., np.cumsum(np.linalg.norm(np.diff(points, axis=0), axis=1))]
+        start, finish = arc[0], arc[-1]
+    if np.any(np.diff(arc) <= EPS):
+        raise ValueError("Duplicate consecutive boundary cones")
+    return PchipInterpolator(arc, padded, axis=0)(
+        np.linspace(start, finish, resolution, endpoint=not closed))
+
 # 5. Optimization
 
 # 6. Visualization and printed output
