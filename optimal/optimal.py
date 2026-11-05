@@ -455,7 +455,8 @@ def evaluate_vehicle_state(speed: Array | float, curvature: Array | float,
     wheel_speed = np.maximum(contact_vx*np.cos(steering)+contact_vy*np.sin(steering), 0.)
     allocation = allocate_longitudinal_force(force, wheel_speed, lateral_force, capacity, vehicle)
     requested = np.stack((allocation["requested"], lateral_force), axis=-1)
-    actual = np.stack((allocation["actual"], lateral_force), axis=-1)
+    actual_lateral = np.clip(lateral_force, -capacity[..., 1], capacity[..., 1])
+    actual = np.stack((allocation["actual"], actual_lateral), axis=-1)
     utilization = friction_utilization(requested, capacity, vehicle.friction_exponent)
     lift = loads <= vehicle.wheel_lift_threshold
     motor_maximum = np.array([m.maximum_speed for m in (
