@@ -298,6 +298,18 @@ def friction_utilization(force: Array, capacity: Array, exponent: float = 2.0) -
     ratio = np.where((capacity <= EPS) & (np.abs(force) > EPS), np.inf, ratio)
     return np.sum(ratio**exponent, axis=-1)**(1/exponent)
 
+def motor_torque(speed: Array | float, motor: MotorParameters, regenerative: bool = False) -> Array:
+    """Torque at rotor speed (rad/s), capped by curve, shaft power, and rotor limit."""
+    omega = np.asarray(speed, dtype=float)
+    if not np.all(np.isfinite(omega)) or np.any(omega < 0):
+        raise ValueError("Rotor speed must be finite and nonnegative")
+    curve = np.asarray(motor.torque_speed_curve)
+    curve_limit = np.interp(omega, curve[:, 0], curve[:, 1])
+    torque_limit = motor.regenerative_torque if regenerative else motor.maximum_torque
+    torque = np.minimum(curve_limit, torque_limit)
+    torque = np.minimum(torque, motor.maximum_power / np.maximum(omega, EPS))
+    return np.where(omega <= motor.maximum_speed, torque, 0.0)
+
 # 4. Track processing and racing-line generation
 
 # 5. Optimization
