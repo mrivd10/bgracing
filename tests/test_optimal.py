@@ -96,4 +96,22 @@ class PhysicsTests(unittest.TestCase):
         limited = allocate_longitudinal_force(np.array([10000.]), speed, lateral, capacity, weak)
         self.assertLessEqual(limited["actual"][0, 0], 10./p.rolling_radius+1e-8)
 
+    def test_invalid_configuration_and_slip(self):
+        p = VehicleParameters()
+        validate_configuration(p, SolverSettings())
+        for invalid in (replace(p, mass=-1.), replace(p, cg_x=.2),
+                        replace(p, tire_load_sensitivity=1.),
+                        replace(p, front_left=replace(p.front_left, efficiency=0.))):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    validate_configuration(invalid, SolverSettings())
+        loads = normal_loads(np.array([10.]), 0., 0., p)
+        steering, slip, beta = slip_angles(np.array([10.]), np.array([0.]), np.zeros((1, 4)), loads, p)
+        np.testing.assert_allclose(steering, 0.)
+        np.testing.assert_allclose(slip, 0.)
+        np.testing.assert_allclose(beta, 0.)
+        for values in ((np.nan, 0., 0.), (10., np.inf, 0.), (-1., 0., 0.)):
+            with self.assertRaises(ValueError):
+                evaluate_vehicle_state(*values, p)
+
     # More physics tests
