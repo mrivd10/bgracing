@@ -55,4 +55,15 @@ class PhysicsTests(unittest.TestCase):
         self.assertTrue(np.any(normal_loads(0., 0., 100., p) < 0))
         self.assertFalse(bool(evaluate_vehicle_state(20., .25, 0., p).feasible))
 
+    def test_friction_ellipse_and_load_sensitivity(self):
+        p = VehicleParameters()
+        capacity = tire_force_limits(np.array([500., 1000.]), p)
+        self.assertLess(capacity[1, 0], 2*capacity[0, 0])
+        force = np.array([[.6, .8], [.8, .8]])*capacity
+        utilization = friction_utilization(force, capacity)
+        self.assertAlmostEqual(utilization[0], 1.)
+        self.assertGreater(utilization[1], 1.)
+        self.assertTrue(np.isinf(friction_utilization(np.array([1., 0.]), np.zeros(2))))
+        self.assertEqual(float(friction_utilization(np.zeros(2), np.zeros(2))), 0.)
+
     # More physics tests
