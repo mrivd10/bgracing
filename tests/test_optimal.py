@@ -137,4 +137,21 @@ class PhysicsTests(unittest.TestCase):
         exaggerated = validate_speed_profile(line, np.full(48, 45.), p, settings)[3]
         self.assertFalse(np.all(exaggerated.feasible))
 
+    def test_open_track_speed_profile(self):
+        p = VehicleParameters()
+        settings = replace(SolverSettings(), longitudinal_samples=40, geometry_samples=40,
+                           curvature_resolution=200, start_speed=0., finish_speed=0.)
+        x = np.linspace(0., 200., 200)
+        center = np.column_stack((x, np.zeros_like(x)))
+        track = Track(center+[0., 4.], center-[0., 4.], center,
+                      np.linspace(0., 1., len(x)), False, 200., ())
+        line = generate_trajectory(track, np.zeros(8), p, settings)
+        result = calculate_speed_profile(line, p, settings)
+        self.assertTrue(result.feasible, result.message)
+        self.assertEqual(result.speed[0], 0.)
+        self.assertEqual(result.speed[-1], 0.)
+        self.assertGreater(result.speed.max(), 10.)
+        self.assertTrue(np.isfinite(result.lap_time))
+        self.assertEqual(len(line.segment_length), len(line.distance)-1)
+
     # More physics tests
