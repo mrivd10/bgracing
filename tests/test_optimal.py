@@ -12,7 +12,7 @@ from optimal.optimal import (
     tire_force_limits, friction_utilization, motor_torque, slip_angles,
     allocate_longitudinal_force, evaluate_vehicle_state, validate_configuration,
     load_track, generate_trajectory, calculate_speed_profile, validate_speed_profile,
-    optimize_racing_line, has_self_intersection, boundaries_cross,
+    optimize_racing_line, has_self_intersection, boundaries_cross, trajectory_clearance,
 )
 
 
@@ -221,5 +221,24 @@ class PhysicsTests(unittest.TestCase):
         self.assertTrue(result.feasible, result.message)
         self.assertLess(result.lap_time, 14.5)
         self.assertGreater(result.speed.max(), 25.)
+
+    def test_clearance_checks_distant_segment_endpoints(self):
+        p = VehicleParameters()
+        left = np.array([[-2., 4.], [2., 4.], [2., 6.], [-2., 6.]])
+        right = np.array([[-100., -1.], [100., -1.], [100., 10.],
+                          [2., 10.], [1., 10.], [0., 10.], [-1., 10.],
+                          [-2., 10.], [-100., 10.]])
+        points = np.array([[0., 0.], [.1, 0.]])
+        # The nearest wall is y=-1, although its endpoints are ~100 m away.
+        # Several vertices on the opposite wall are only ~10 m away.
+        expected = 1.-np.hypot(p.external_length, p.external_width)/2-p.boundary_margin-.05
+        subdivided = np.insert(right, 1, [0., -1.], axis=0)
+        for boundary in (right, np.roll(right, -1, axis=0), subdivided):
+            with self.subTest(vertices=len(boundary), first=boundary[0]):
+                track = Track(left, boundary, left,
+                              np.linspace(0., 1., len(left), endpoint=False), True, 0., ())
+                clearance = trajectory_clearance(points, track, p)
+                self.assertAlmostEqual(clearance, expected)
+                self.assertLess(clearance, 0.)
 
     # More physics tests
