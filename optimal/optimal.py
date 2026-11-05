@@ -383,6 +383,81 @@ def allocate_longitudinal_force(request: Array, wheel_speed: Array, lateral_forc
     return {"requested": requested, "actual": actual, "battery_power": power,
             "regen_power": charge, "yaw_moment": yaw, "limits": limits}
 
+def evaluate_vehicle_state(speed: Array | float, curvature: Array | float,
+                           acceleration: Array | float, vehicle: VehicleParameters,
+                           curvature_gradient: Array | float = 0.0) -> VehicleState:
+    """Solve planar force/yaw equilibrium, then check every requested tire force.
+
+    Unknowns are total longitudinal tire force and front/rear lateral forces.
+    Steering rotates tire forces into body axes. Yaw acceleration is
+    ax*kappa + v^2*d(kappa)/ds. Steering/slip and force equilibrium are iterated;
+    nonconvergence is rejected. This is quasi-steady slip, not transient tires.
+    """
+    v, k, ax, dk = np.broadcast_arrays(
+        np.asarray(speed, float), np.asarray(curvature, float),
+        np.asarray(acceleration, float), np.asarray(curvature_gradient, float))
+    if not all(np.all(np.isfinite(x)) for x in (v, k, ax, dk)) or np.any(v < 0):
+        raise ValueError("Vehicle state inputs must be finite, with nonnegative speed")
+    loads = normal_loads(v, ax, v*v*k, vehicle)
+    capacity = tire_force_limits(loads, vehicle)
+    positions = static_vehicle_properties(vehicle)["wheel_positions"]
+    _, drag = aerodynamic_forces(v, vehicle)
+    demand = np.stack((vehicle.mass*ax+drag, vehicle.mass*v*v*k,
+                       vehicle.yaw_inertia*(ax*k+v*v*dk)), axis=-1)
+    lateral_weights = np.maximum(capacity[..., 1], EPS)
+    lateral_weights = lateral_weights.reshape((*v.shape, 2, 2))
+    lateral_weights /= lateral_weights.sum(axis=-1, keepdims=True)
+    lateral_weights = lateral_weights.reshape((*v.shape, 4))
+    steering = np.zeros((*v.shape, 4))
+    lateral_force = np.zeros_like(steering)
+    tire_slip = np.zeros_like(steering)
+    force = demand[..., 0].copy()
+    # Fixed-point iteration with a conservative small-slip validity check below.
+    for _ in range(12):
+        fraction = np.where(force < 0, vehicle.front_brake_bias, vehicle.front_drive_fraction)
+        weights = np.stack((fraction/2, fraction/2, (1-fraction)/2, (1-fraction)/2), axis=-1)
+        cosine, sine = np.cos(steering), np.sin(steering)
+        front_basis = lateral_weights*np.array([1, 1, 0, 0])
+        rear_basis = lateral_weights*np.array([0, 0, 1, 1])
+        long_column = np.stack((np.sum(weights*cosine, axis=-1),
+                                np.sum(weights*sine, axis=-1),
+                                np.sum(weights*(positions[:, 0]*sine-positions[:, 1]*cosine), axis=-1)), axis=-1)
+        front_column = np.stack((-np.sum(front_basis*sine, axis=-1),
+                                 np.sum(front_basis*cosine, axis=-1),
+                                 np.sum(front_basis*(positions[:, 0]*cosine+positions[:, 1]*sine), axis=-1)), axis=-1)
+        rear_column = np.stack((-np.sum(rear_basis*sine, axis=-1),
+                                np.sum(rear_basis*cosine, axis=-1),
+                                np.sum(rear_basis*(positions[:, 0]*cosine+positions[:, 1]*sine), axis=-1)), axis=-1)
+        matrix = np.stack((long_column, front_column, rear_column), axis=-1)
+        solution = np.linalg.solve(matrix, demand[..., None])[..., 0]
+        force = solution[..., 0]
+        lateral_force = solution[..., 1, None]*front_basis + solution[..., 2, None]*rear_basis
+        new_steering, tire_slip, _ = slip_angles(v, k, lateral_force, loads, vehicle)
+        error = np.max(np.abs(new_steering-steering), axis=-1)
+        steering = new_steering
+        if np.all(error < 1e-8):
+            break
+    wheel_speed = np.maximum(v[..., None]*(1-k[..., None]*positions[:, 1]), 0)
+    allocation = allocate_longitudinal_force(force, wheel_speed, lateral_force, capacity, vehicle)
+    requested = np.stack((allocation["requested"], lateral_force), axis=-1)
+    actual = np.stack((allocation["actual"], lateral_force), axis=-1)
+    utilization = friction_utilization(requested, capacity, vehicle.friction_exponent)
+    lift = loads <= vehicle.wheel_lift_threshold
+    motor_maximum = np.array([m.maximum_speed for m in (
+        vehicle.front_left, vehicle.front_right, vehicle.rear_left, vehicle.rear_right)])
+    valid = ((v <= vehicle.maximum_speed) & np.all(~lift, axis=-1)
+             & np.all(utilization <= 1+1e-8, axis=-1)
+             & np.all(np.abs(allocation["requested"]-allocation["actual"]) <= 1e-5, axis=-1)
+             & np.all(wheel_speed/vehicle.rolling_radius <= motor_maximum, axis=-1)
+             & np.all(np.abs(steering) <= vehicle.maximum_steering, axis=-1)
+             & np.all(np.abs(tire_slip) <= vehicle.small_slip_limit, axis=-1)
+             & (error < 1e-6))
+    yaw = np.sum(allocation["actual"]*(positions[:, 0]*np.sin(steering)
+                                     -positions[:, 1]*np.cos(steering)), axis=-1)
+    return VehicleState(loads, capacity, requested, actual, utilization,
+                        allocation["battery_power"], allocation["regen_power"],
+                        yaw, steering, tire_slip, lift, valid)
+
 # 4. Track processing and racing-line generation
 
 # 5. Optimization
