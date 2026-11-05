@@ -969,4 +969,46 @@ def optimize_racing_line(track: Track, vehicle: VehicleParameters, settings: Sol
 
 # 6. Visualization and printed output
 
+def simulation_summary(result: SimulationResult, baseline: SimulationResult, track: Track,
+                       vehicle: VehicleParameters, evaluations: int) -> dict[str, Any]:
+    """Report model checks and assumptions; never label a failed profile feasible."""
+    check_speed = np.sqrt(np.maximum(np.interp(
+        result.validation_distance,
+        np.r_[result.trajectory.distance, result.trajectory.length] if track.closed else result.trajectory.distance,
+        np.r_[result.speed**2, result.speed[0]**2] if track.closed else result.speed**2), 0.))
+    parameter = np.interp(result.validation_distance, result.trajectory.geometry_distance,
+                          result.trajectory.geometry_parameter)
+    first, second = result.trajectory.spline(parameter, 1), result.trajectory.spline(parameter, 2)
+    curvature = (first[:, 0]*second[:, 1]-first[:, 1]*second[:, 0])/np.maximum(np.linalg.norm(first, axis=1)**3, EPS)
+    lift = result.state.wheel_lift
+    events = int(np.sum(lift[0]) + np.sum(lift[1:] & ~lift[:-1]))
+    return {
+        "result_type": "SIMULATION ESTIMATE — ASSUMED vehicle parameters; no experimental validation",
+        "topology": "closed" if track.closed else "open",
+        "vehicle_mass_kg": vehicle.mass,
+        "maximum_vehicle_speed_m_per_s": vehicle.maximum_speed,
+        "track_centerline_length_m": track.length,
+        "racing_line_length_m": result.trajectory.length,
+        "estimated_lap_time_s": result.lap_time,
+        "centerline_baseline_time_s": baseline.lap_time,
+        "improvement_s": baseline.lap_time-result.lap_time,
+        "improvement_percent": 100*(baseline.lap_time-result.lap_time)/baseline.lap_time,
+        "average_speed_m_per_s": result.trajectory.length/result.lap_time,
+        "peak_speed_m_per_s": float(result.speed.max()),
+        "maximum_lateral_acceleration_m_per_s2": float(np.max(np.abs(check_speed**2*curvature))),
+        "maximum_braking_deceleration_m_per_s2": float(max(0., -result.validation_acceleration.min())),
+        "maximum_longitudinal_acceleration_m_per_s2": float(max(0., result.validation_acceleration.max())),
+        "maximum_tire_utilization": float(result.state.utilization.max()),
+        "minimum_normal_force_N": float(result.state.normal_load.min()),
+        "wheel_lift_events": events,
+        "maximum_battery_power_W": float(result.state.battery_power.max()),
+        "maximum_regenerative_power_W": float(result.state.regenerative_power.max()),
+        "minimum_conservative_boundary_clearance_m": result.trajectory.boundary_clearance,
+        "all_model_constraints_satisfied": result.feasible,
+        "baseline_model_constraints_satisfied": baseline.feasible,
+        "candidate_evaluations": evaluations,
+        "speed_solver": result.message,
+        "track_notes": list(track.notes),
+    }
+
 # 7. Main execution
