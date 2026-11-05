@@ -289,6 +289,15 @@ def tire_force_limits(loads: Array, vehicle: VehicleParameters) -> Array:
     return (effective[..., None] * vehicle.grip_safety_factor
             * np.array([vehicle.mu_longitudinal, vehicle.mu_lateral]))
 
+def friction_utilization(force: Array, capacity: Array, exponent: float = 2.0) -> Array:
+    """Return the ellipse norm, <=1 feasible; never silently clip requested force."""
+    force, capacity = np.broadcast_arrays(np.asarray(force, float), np.asarray(capacity, float))
+    if force.shape[-1] != 2 or not np.all(np.isfinite(force)) or not np.all(np.isfinite(capacity)):
+        raise ValueError("Forces/capacities must be finite Fx,Fy pairs")
+    ratio = np.divide(np.abs(force), capacity, out=np.zeros_like(force), where=capacity > EPS)
+    ratio = np.where((capacity <= EPS) & (np.abs(force) > EPS), np.inf, ratio)
+    return np.sum(ratio**exponent, axis=-1)**(1/exponent)
+
 # 4. Track processing and racing-line generation
 
 # 5. Optimization
