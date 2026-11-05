@@ -219,6 +219,25 @@ def validate_configuration(vehicle: VehicleParameters, settings: SolverSettings)
 
 # 2. Static calculations
 
+def static_vehicle_properties(vehicle: VehicleParameters) -> dict[str, Array]:
+    """Static equilibrium with an explicit zero-diagonal-preload assumption.
+
+    Axle totals follow pitch equilibrium. Each axle carries the same lateral
+    CG offset using its own track width; suspension preload could change the
+    diagonal corner weights without changing the total equilibrium.
+    """
+    a = -vehicle.cg_x
+    b = vehicle.wheelbase - a
+    axle = vehicle.mass * vehicle.gravity * np.array([b, a]) / vehicle.wheelbase
+    left_fraction = 0.5 + vehicle.cg_y / np.array([vehicle.front_track, vehicle.rear_track])
+    corners = (axle[:, None] * np.column_stack((left_fraction, 1-left_fraction))).ravel()
+    positions = np.array([[a, vehicle.front_track/2-vehicle.cg_y],
+                          [a, -vehicle.front_track/2-vehicle.cg_y],
+                          [-b, vehicle.rear_track/2-vehicle.cg_y],
+                          [-b, -vehicle.rear_track/2-vehicle.cg_y]])
+    return {"axle_loads": axle, "corner_loads": corners,
+            "axle_distances": np.array([a, b]), "wheel_positions": positions}
+
 # 3. Dynamic calculations
 
 # 4. Track processing and racing-line generation
