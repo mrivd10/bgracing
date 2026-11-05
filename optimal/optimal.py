@@ -21,6 +21,10 @@ from scipy.spatial import cKDTree
 Array = NDArray[np.float64]
 WHEELS = ("FL", "FR", "RL", "RR")
 EPS = 1e-10  # Numerical zero, not physical tuning.
+FORCE_BALANCE_ITERATIONS = 12  # Fixed-point steering/force iterations.
+STEERING_CONVERGENCE = 1e-8  # rad, iteration stopping threshold.
+STEERING_ACCEPTANCE = 1e-6  # rad, maximum accepted residual.
+FORCE_ACCEPTANCE = 1e-5  # N, allocation matching tolerance.
 
 # 1. Vehicle parameters and physical constants
 @dataclass(frozen=True)
@@ -102,6 +106,8 @@ class SolverSettings:
     closure_gap_ratio: float = 1.8
     maximum_ordering_jump_ratio: float = 5.0
     minimum_speed: float = 0.05
+    speed_reserve: float = 0.98  # Retained speed before propagation and per repair.
+    lateral_search_span: float = 0.75  # Fraction of available half-corridor width.
     acceleration_search_limit: float = 25.0  # m/s^2 checked numerical bracket.
     start_speed: float = 0.0  # m/s OPEN paths only.
     finish_speed: float | None = None  # Free OPEN terminal speed if None.
@@ -419,7 +425,7 @@ def evaluate_vehicle_state(speed: Array | float, curvature: Array | float,
     tire_slip = np.zeros_like(steering)
     force = demand[..., 0].copy()
     # Fixed-point iteration with a conservative small-slip validity check below.
-    for _ in range(12):
+    for _ in range(FORCE_BALANCE_ITERATIONS):
         fraction = np.where(force < 0, vehicle.front_brake_bias, vehicle.front_drive_fraction)
         weights = np.stack((fraction/2, fraction/2, (1-fraction)/2, (1-fraction)/2), axis=-1)
         cosine, sine = np.cos(steering), np.sin(steering)
@@ -441,7 +447,7 @@ def evaluate_vehicle_state(speed: Array | float, curvature: Array | float,
         new_steering, tire_slip, _ = slip_angles(v, k, lateral_force, loads, vehicle)
         error = np.max(np.abs(new_steering-steering), axis=-1)
         steering = new_steering
-        if np.all(error < 1e-8):
+        if np.all(error < STEERING_CONVERGENCE):
             break
     wheel_speed = np.maximum(v[..., None]*(1-k[..., None]*positions[:, 1]), 0)
     allocation = allocate_longitudinal_force(force, wheel_speed, lateral_force, capacity, vehicle)
@@ -453,11 +459,11 @@ def evaluate_vehicle_state(speed: Array | float, curvature: Array | float,
         vehicle.front_left, vehicle.front_right, vehicle.rear_left, vehicle.rear_right)])
     valid = ((v <= vehicle.maximum_speed) & np.all(~lift, axis=-1)
              & np.all(utilization <= 1+1e-8, axis=-1)
-             & np.all(np.abs(allocation["requested"]-allocation["actual"]) <= 1e-5, axis=-1)
+             & np.all(np.abs(allocation["requested"]-allocation["actual"]) <= FORCE_ACCEPTANCE, axis=-1)
              & np.all(wheel_speed/vehicle.rolling_radius <= motor_maximum, axis=-1)
              & np.all(np.abs(steering) <= vehicle.maximum_steering, axis=-1)
              & np.all(np.abs(tire_slip) <= vehicle.small_slip_limit, axis=-1)
-             & (error < 1e-6))
+             & (error < STEERING_ACCEPTANCE))
     yaw = np.sum(allocation["actual"]*(positions[:, 0]*np.sin(steering)
                                      -positions[:, 1]*np.cos(steering)), axis=-1)
     return VehicleState(loads, capacity, requested, actual, utilization,
@@ -877,7 +883,7 @@ def calculate_speed_profile(trajectory: Trajectory, vehicle: VehicleParameters,
     if trajectory.boundary_clearance < 0:
         raise ValueError("Candidate violates vehicle footprint/boundary clearance")
     ceiling = cornering_speed_limits(trajectory, vehicle, settings)
-    speed = ceiling*0.98  # 2% numerical grip reserve before coupled propagation.
+    speed = ceiling*settings.speed_reserve
     if not trajectory.closed:
         if settings.start_speed > speed[0] or (settings.finish_speed is not None and settings.finish_speed > speed[-1]):
             raise ValueError("Prescribed endpoint speed exceeds local physical limit")
@@ -907,7 +913,7 @@ def calculate_speed_profile(trajectory: Trajectory, vehicle: VehicleParameters,
         trajectory, speed, vehicle, settings)
     repair_count = 0
     while not np.all(state.feasible) and repair_count < settings.speed_iterations:
-        speed *= 0.98
+        speed *= settings.speed_reserve
         repair_count += 1
         acceleration, distance, check_acceleration, state, segments = validate_speed_profile(
             trajectory, speed, vehicle, settings)
@@ -941,7 +947,7 @@ def optimize_racing_line(track: Track, vehicle: VehicleParameters, settings: Sol
     evaluations = 1
     for sweep in range(settings.optimization_sweeps):
         changed = False
-        span = 0.75/(sweep+1)
+        span = settings.lateral_search_span/(sweep+1)
         for index in range(len(controls)):
             best_value = controls[index]
             candidates = np.unique(np.clip(
@@ -1093,6 +1099,8 @@ def save_results(result: SimulationResult, baseline: SimulationResult, track: Tr
             validation[f"available_{component}_{wheel}_N"] = result.state.available_force[:, i, j]
     pd.DataFrame(validation).to_csv(output/"constraint_validation.csv", index=False)
 
+# 7. Main execution
+
 def main(argv: list[str] | None = None) -> int:
     """Run the optimizer without import side effects or a required GUI display."""
     import hashlib
@@ -1133,6 +1141,5 @@ def main(argv: list[str] | None = None) -> int:
         raise RuntimeError("Source CSV changed during execution")
     return 0 if result.feasible else 1
 
-# 7. Main execution
 if __name__ == "__main__":
     raise SystemExit(main())
