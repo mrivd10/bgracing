@@ -669,11 +669,12 @@ def load_track(path: str | Path, settings: SolverSettings,
                  np.linspace(0., 1., len(center), endpoint=not closed), closed, length, tuple(notes))
 
 def trajectory_clearance(points: Array, track: Track, vehicle: VehicleParameters) -> float:
-    """Conservative swept-disc clearance to lateral boundaries, in meters.
+    """Sampled swept-disc clearance to lateral boundary polylines, in meters.
 
     A disc enclosing the ASSUMED rectangular body accounts for both width and
-    length at any heading. Subtract half the largest sample spacing so a
-    between-sample excursion cannot be accepted just from sampled clearance.
+    length at any heading. Check every boundary segment and subtract half the
+    largest sample chord as a spacing reserve. Spline sampling remains a
+    numerical approximation, not a proof of continuous-curve containment.
     Open path end caps are entry/exit gates, not physical walls.
     """
     from matplotlib.path import Path as PolygonPath
@@ -692,21 +693,18 @@ def trajectory_clearance(points: Array, track: Track, vehicle: VehicleParameters
         return -np.inf
     minimum = np.inf
     for boundary in (track.left, track.right):
-        # Nearest vertices identify neighboring segments on the dense polyline.
-        _, nearest = cKDTree(boundary).query(points, k=min(4, len(boundary)))
-        indices = np.concatenate((nearest, nearest-1), axis=1)
-        if track.closed:
-            indices %= len(boundary)
-            following = (indices+1) % len(boundary)
-        else:
-            indices = np.clip(indices, 0, len(boundary)-2)
-            following = indices+1
-        a, b = boundary[indices], boundary[following]
+        # A nearest vertex need not belong to the nearest segment. Check all
+        # segments; point batches bound temporary memory on high-resolution grids.
+        a = boundary if track.closed else boundary[:-1]
+        b = np.roll(boundary, -1, axis=0) if track.closed else boundary[1:]
         segment = b-a
-        fraction = np.clip(np.sum((points[:, None]-a)*segment, axis=-1)
-                           / np.maximum(np.sum(segment*segment, axis=-1), EPS), 0., 1.)
-        distance = np.linalg.norm(points[:, None]-a-fraction[..., None]*segment, axis=-1)
-        minimum = min(minimum, float(distance.min()))
+        squared_length = np.sum(segment*segment, axis=-1)
+        denominator = np.where(squared_length > 0., squared_length, 1.)
+        for start in range(0, len(points), 128):
+            delta = points[start:start+128, None]-a
+            fraction = np.clip(np.sum(delta*segment, axis=-1)/denominator, 0., 1.)
+            distance = np.linalg.norm(delta-fraction[..., None]*segment, axis=-1)
+            minimum = min(minimum, float(distance.min()))
     lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
     if track.closed:
         lengths = np.r_[lengths, np.linalg.norm(points[0]-points[-1])]
