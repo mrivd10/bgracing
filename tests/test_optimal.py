@@ -39,4 +39,20 @@ class PhysicsTests(unittest.TestCase):
         np.testing.assert_allclose(loads.sum(axis=-1), p.mass*p.gravity+down.sum(axis=-1))
         self.assertAlmostEqual(down[1, :2].sum()/down[1].sum(), p.aero_front_fraction)
 
+    def test_load_transfer_moments(self):
+        p = replace(VehicleParameters(), drag_area=0.)
+        static = static_vehicle_properties(p)["corner_loads"]
+        forward = normal_loads(0., 4., 0., p)
+        reverse = normal_loads(0., -4., 0., p)
+        self.assertAlmostEqual(static[:2].sum()-forward[:2].sum(), p.mass*4*p.cg_z/p.wheelbase)
+        np.testing.assert_allclose(forward+reverse, 2*static)
+        left = normal_loads(0., 0., 6., p)
+        right = normal_loads(0., 0., -6., p)
+        np.testing.assert_allclose(left, right[[1, 0, 3, 2]])
+        self.assertGreater(left[1], left[0])
+        roll_moment = (left[1]-left[0])*p.front_track/2+(left[3]-left[2])*p.rear_track/2
+        self.assertAlmostEqual(roll_moment, p.mass*6*p.cg_z)
+        self.assertTrue(np.any(normal_loads(0., 0., 100., p) < 0))
+        self.assertFalse(bool(evaluate_vehicle_state(20., .25, 0., p).feasible))
+
     # More physics tests
