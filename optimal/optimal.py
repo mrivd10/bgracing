@@ -128,6 +128,9 @@ class Trajectory:
     length: float
     closed: bool
     boundary_clearance: float
+    spline: CubicSpline
+    geometry_parameter: Array
+    geometry_distance: Array
 
 
 @dataclass
@@ -156,6 +159,8 @@ class SimulationResult:
     feasible: bool
     iterations: int
     message: str
+    validation_distance: Array
+    validation_acceleration: Array
 
 
 def validate_configuration(vehicle: VehicleParameters, settings: SolverSettings) -> None:
@@ -748,7 +753,7 @@ def generate_trajectory(track: Track, controls: Array, vehicle: VehicleParameter
         raise ValueError("Candidate trajectory self-intersects")
     return Trajectory(position, np.unwrap(np.arctan2(first[:, 1], first[:, 0])),
                       curvature, gradient, sample_arc, segment_length, length,
-                      track.closed, clearance)
+                      track.closed, clearance, spline, dense_parameter, dense_arc)
 
 def validated_cone_pairs(left: Array, right: Array, closed: bool, resolution: int) -> tuple[Array, Array] | None:
     """Use row pairs only after transverse, cell-orientation, and crossing checks.
