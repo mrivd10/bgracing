@@ -240,6 +240,16 @@ def static_vehicle_properties(vehicle: VehicleParameters) -> dict[str, Array]:
 
 # 3. Dynamic calculations
 
+def aerodynamic_forces(speed: Array | float, vehicle: VehicleParameters) -> tuple[Array, Array]:
+    """Return per-wheel downforce and drag (N); positive ClA means downforce."""
+    speed = np.asarray(speed, dtype=float)
+    if np.any(~np.isfinite(speed)) or np.any(speed < 0):
+        raise ValueError("Speed must be finite and nonnegative")
+    pressure = 0.5 * vehicle.air_density * speed**2
+    split = np.array([vehicle.aero_front_fraction/2]*2
+                     + [(1-vehicle.aero_front_fraction)/2]*2)
+    return pressure[..., None] * vehicle.downforce_area * split, pressure * vehicle.drag_area
+
 # 4. Track processing and racing-line generation
 
 # 5. Optimization
