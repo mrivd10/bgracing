@@ -585,7 +585,7 @@ def load_track(path: str | Path, settings: SolverSettings,
             seam = (points[0]-points[-1])/gap
             alignment = min(np.dot(seam, (points[1]-points[0])/steps[0]),
                             np.dot(seam, (points[-1]-points[-2])/steps[-1]))
-            closure.append(gap <= settings.closure_gap_ratio*np.median(steps) and alignment > 0.5)
+            closure.append(bool(gap <= settings.closure_gap_ratio*np.median(steps) and alignment > 0.5))
         boundaries.append(points)
     if topology == "auto" and closure[0] != closure[1]:
         raise ValueError("Ambiguous topology: specify --topology open or closed")
@@ -602,6 +602,8 @@ def load_track(path: str | Path, settings: SolverSettings,
     for points in (left_raw, right_raw):
         if has_self_intersection(points, closed):
             raise ValueError("Boundary self-intersects; repair source ordering explicitly")
+    if boundaries_cross(left_raw, right_raw, closed):
+        raise ValueError("Left/right boundaries intersect or touch")
     paired = validated_cone_pairs(left_raw, right_raw, closed, settings.interpolation_resolution)
     if paired is not None:
         left, right = paired
