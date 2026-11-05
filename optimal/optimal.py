@@ -819,6 +819,30 @@ def validated_cone_pairs(left: Array, right: Array, closed: bool, resolution: in
     result = PchipInterpolator(arc, padded, axis=0)(stations)
     return result[:, :2], result[:, 2:]
 
+def boundaries_cross(left: Array, right: Array, closed: bool) -> bool:
+    """Detect left/right crossings or touching; such a corridor is invalid."""
+    left_end = np.roll(left, -1, axis=0) if closed else left[1:]
+    right_end = np.roll(right, -1, axis=0) if closed else right[1:]
+    left_start = left if closed else left[:-1]
+    right_start = right if closed else right[:-1]
+    right_delta = right_end-right_start
+    for a, b in zip(left_start, left_end):
+        delta = b-a
+        q = right_start-a
+        denominator = delta[0]*right_delta[:, 1]-delta[1]*right_delta[:, 0]
+        t = np.divide(q[:, 0]*right_delta[:, 1]-q[:, 1]*right_delta[:, 0], denominator,
+                      out=np.full(len(q), np.inf), where=np.abs(denominator) > EPS)
+        u = np.divide(q[:, 0]*delta[1]-q[:, 1]*delta[0], denominator,
+                      out=np.full(len(q), np.inf), where=np.abs(denominator) > EPS)
+        if np.any((t >= 0) & (t <= 1) & (u >= 0) & (u <= 1)):
+            return True
+        collinear = (np.abs(denominator) <= EPS) & (np.abs(q[:, 0]*delta[1]-q[:, 1]*delta[0]) <= EPS)
+        first = q @ delta/max(float(delta @ delta), EPS)
+        last = (right_end-a) @ delta/max(float(delta @ delta), EPS)
+        if np.any(collinear & (np.maximum(first, last) >= 0) & (np.minimum(first, last) <= 1)):
+            return True
+    return False
+
 # 5. Optimization
 
 def cornering_speed_limits(trajectory: Trajectory, vehicle: VehicleParameters,
