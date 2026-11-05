@@ -78,4 +78,22 @@ class PhysicsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             motor_torque(np.nan, motor)
 
+    def test_allocation_and_battery_limits(self):
+        p = replace(VehicleParameters(), battery_power=1000., battery_regen_power=300.)
+        speed = np.full((1, 4), 20.)
+        capacity = np.full((1, 4, 2), 1e5)
+        lateral = np.zeros((1, 4))
+        drive = allocate_longitudinal_force(np.array([10000.]), speed, lateral, capacity, p)
+        self.assertLessEqual(drive["battery_power"][0], p.battery_power+1e-8)
+        self.assertAlmostEqual(drive["yaw_moment"][0], 0.)
+        np.testing.assert_allclose(drive["actual"][0, [0, 2]], drive["actual"][0, [1, 3]])
+        brake = allocate_longitudinal_force(np.array([-20000.]), speed, lateral, capacity, p)
+        self.assertLessEqual(brake["regen_power"][0], p.battery_regen_power+1e-8)
+        self.assertGreater(np.abs(brake["actual"]).sum(), 0.)
+        stalled = allocate_longitudinal_force(np.array([-200.]), np.zeros((1, 4)), lateral, capacity, p)
+        self.assertEqual(stalled["regen_power"][0], 0.)
+        weak = replace(p, battery_power=40000., front_left=replace(p.front_left, maximum_torque=10.))
+        limited = allocate_longitudinal_force(np.array([10000.]), speed, lateral, capacity, weak)
+        self.assertLessEqual(limited["actual"][0, 0], 10./p.rolling_radius+1e-8)
+
     # More physics tests
