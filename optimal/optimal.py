@@ -806,6 +806,23 @@ def validated_cone_pairs(left: Array, right: Array, closed: bool, resolution: in
 
 # 5. Optimization
 
+def cornering_speed_limits(trajectory: Trajectory, vehicle: VehicleParameters,
+                           settings: SolverSettings) -> Array:
+    """Bisection on steady-speed feasibility, including aero, power and yaw demand."""
+    low = np.zeros_like(trajectory.curvature)
+    high = np.full_like(low, vehicle.maximum_speed)
+    stationary = evaluate_vehicle_state(low, trajectory.curvature, 0., vehicle,
+                                        trajectory.curvature_gradient).feasible
+    if not np.all(stationary):
+        raise ValueError("Trajectory fails steering geometry even at zero speed")
+    for _ in range(settings.bisection_iterations):
+        middle = (low+high)/2
+        valid = evaluate_vehicle_state(middle, trajectory.curvature, 0., vehicle,
+                                      trajectory.curvature_gradient).feasible
+        low = np.where(valid, middle, low)
+        high = np.where(valid, high, middle)
+    return low
+
 # 6. Visualization and printed output
 
 # 7. Main execution
