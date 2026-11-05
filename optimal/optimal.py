@@ -158,6 +158,65 @@ class SimulationResult:
     message: str
 
 
+def validate_configuration(vehicle: VehicleParameters, settings: SolverSettings) -> None:
+    """Reject unsupported, nonfinite, or physically invalid model inputs."""
+    positive = ("mass", "cg_z", "wheelbase", "front_track", "rear_track",
+                "external_width", "external_length", "yaw_inertia", "rolling_radius",
+                "mu_longitudinal", "mu_lateral", "cornering_stiffness",
+                "tire_reference_load", "small_slip_limit", "maximum_speed", "gravity",
+                "maximum_steering", "air_density")
+    for name in positive:
+        if not np.isfinite(getattr(vehicle, name)) or getattr(vehicle, name) <= 0:
+            raise ValueError(f"{name} must be finite and positive")
+    for name, value in asdict(vehicle).items():
+        if isinstance(value, (int, float)) and not np.isfinite(value):
+            raise ValueError(f"{name} must be finite")
+    if not -vehicle.wheelbase < vehicle.cg_x < 0:
+        raise ValueError("cg_x must lie behind the front axle and ahead of the rear")
+    if abs(vehicle.cg_y) >= min(vehicle.front_track, vehicle.rear_track) / 2:
+        raise ValueError("CG must lie between the wheels")
+    for name in ("front_drive_fraction", "front_brake_bias", "aero_front_fraction",
+                 "front_roll_fraction", "grip_safety_factor"):
+        if not 0 < getattr(vehicle, name) < 1:
+            raise ValueError(f"{name} must lie strictly between zero and one")
+    for name in ("battery_power", "battery_regen_power", "regen_minimum_speed",
+                 "mechanical_brake_torque", "downforce_area", "drag_area",
+                 "wheel_lift_threshold", "boundary_margin", "front_roll_center",
+                 "rear_roll_center"):
+        if getattr(vehicle, name) < 0:
+            raise ValueError(f"{name} cannot be negative")
+    if not 0 <= vehicle.tire_load_sensitivity < 1 or vehicle.friction_exponent < 1:
+        raise ValueError("Invalid tire sensitivity or friction exponent")
+    if max(vehicle.front_roll_center, vehicle.rear_roll_center) > vehicle.cg_z:
+        raise ValueError("This approximate roll model requires roll centers below CG")
+    for motor in (vehicle.front_left, vehicle.front_right, vehicle.rear_left, vehicle.rear_right):
+        curve = np.asarray(motor.torque_speed_curve, dtype=float)
+        if (curve.ndim != 2 or curve.shape[1] != 2 or len(curve) < 2
+                or not np.all(np.isfinite(curve)) or np.any(curve < 0)
+                or curve[0, 0] != 0 or np.any(np.diff(curve[:, 0]) <= 0)
+                or curve[-1, 0] < motor.maximum_speed):
+            raise ValueError("Motor curve must span zero to maximum speed, in order")
+        if (not all(np.isfinite(x) and x > 0 for x in (
+                motor.maximum_torque, motor.maximum_power, motor.maximum_speed))
+                or not 0 < motor.efficiency <= 1 or motor.regenerative_torque < 0):
+            raise ValueError("Invalid motor limits")
+    for name in ("longitudinal_samples", "interpolation_resolution", "curvature_resolution"):
+        if getattr(settings, name) < 8:
+            raise ValueError(f"{name} must be at least eight")
+    for name in ("control_points", "lateral_candidates", "bisection_iterations",
+                 "speed_iterations", "constraint_substeps"):
+        if getattr(settings, name) < 2:
+            raise ValueError(f"{name} must be at least two")
+    if settings.optimization_sweeps < 0:
+        raise ValueError("optimization_sweeps cannot be negative")
+    for name in ("speed_tolerance", "feasibility_tolerance", "minimum_speed",
+                 "acceleration_search_limit", "closure_gap_ratio",
+                 "maximum_ordering_jump_ratio"):
+        if not np.isfinite(getattr(settings, name)) or getattr(settings, name) <= 0:
+            raise ValueError(f"{name} must be finite and positive")
+    if settings.start_speed < 0 or (settings.finish_speed is not None and settings.finish_speed < 0):
+        raise ValueError("Open-path endpoint speeds cannot be negative")
+
 # 2. Static calculations
 
 # 3. Dynamic calculations
