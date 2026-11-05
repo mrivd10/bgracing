@@ -444,12 +444,15 @@ def evaluate_vehicle_state(speed: Array | float, curvature: Array | float,
         solution = np.linalg.solve(matrix, demand[..., None])[..., 0]
         force = solution[..., 0]
         lateral_force = solution[..., 1, None]*front_basis + solution[..., 2, None]*rear_basis
-        new_steering, tire_slip, _ = slip_angles(v, k, lateral_force, loads, vehicle)
+        new_steering, tire_slip, beta = slip_angles(v, k, lateral_force, loads, vehicle)
         error = np.max(np.abs(new_steering-steering), axis=-1)
         steering = new_steering
         if np.all(error < STEERING_CONVERGENCE):
             break
-    wheel_speed = np.maximum(v[..., None]*(1-k[..., None]*positions[:, 1]), 0)
+    yaw_rate = v*k
+    contact_vx = v[..., None]*np.cos(beta[..., None])-yaw_rate[..., None]*positions[:, 1]
+    contact_vy = v[..., None]*np.sin(beta[..., None])+yaw_rate[..., None]*positions[:, 0]
+    wheel_speed = np.maximum(contact_vx*np.cos(steering)+contact_vy*np.sin(steering), 0.)
     allocation = allocate_longitudinal_force(force, wheel_speed, lateral_force, capacity, vehicle)
     requested = np.stack((allocation["requested"], lateral_force), axis=-1)
     actual = np.stack((allocation["actual"], lateral_force), axis=-1)
