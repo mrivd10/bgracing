@@ -205,4 +205,21 @@ class PhysicsTests(unittest.TestCase):
         np.testing.assert_allclose(yaw, p.yaw_inertia*(acceleration*curvature+speed**2*gradient), atol=.001)
         self.assertTrue(np.all(friction_utilization(state.actual_force, state.available_force) <= 1.+1e-8))
 
+    def test_straight_line_acceleration_uses_current_speed(self):
+        p = VehicleParameters()
+        settings = replace(SolverSettings(), longitudinal_samples=40, geometry_samples=40,
+                           curvature_resolution=200, start_speed=0., finish_speed=None)
+        x = np.linspace(0., 200., 200)
+        center = np.column_stack((x, np.zeros_like(x)))
+        track = Track(center+[0., 4.], center-[0., 4.], center,
+                      np.linspace(0., 1., len(x)), False, 200., ())
+        line = generate_trajectory(track, np.zeros(8), p, settings)
+        # Constant 2 m/s² is independently feasible and traverses 200 m in 14.14 s.
+        reference_speed = np.sqrt(4*line.distance)
+        self.assertTrue(np.all(validate_speed_profile(line, reference_speed, p, settings)[3].feasible))
+        result = calculate_speed_profile(line, p, settings)
+        self.assertTrue(result.feasible, result.message)
+        self.assertLess(result.lap_time, 14.5)
+        self.assertGreater(result.speed.max(), 25.)
+
     # More physics tests
