@@ -677,6 +677,66 @@ def trajectory_clearance(points: Array, track: Track, vehicle: VehicleParameters
     body_radius = np.hypot(vehicle.external_length, vehicle.external_width)/2
     return float(minimum-body_radius-vehicle.boundary_margin-lengths.max()/2)
 
+def generate_trajectory(track: Track, controls: Array, vehicle: VehicleParameters,
+                        settings: SolverSettings) -> Trajectory:
+    """Smooth lateral controls -> continuous XY spline -> own arc length/curvature.
+
+    Periodic splines use an explicit duplicated seam knot but output arrays do
+    not duplicate it. Cubic overshoot is permitted only if clearance checks
+    succeed. The centerline is controls==0, not a replacement for optimization.
+    """
+    controls = np.asarray(controls, float)
+    if controls.ndim != 1 or len(controls) < 4 or not np.all(np.isfinite(controls)):
+        raise ValueError("At least four finite lateral controls are required")
+    if np.any(np.abs(controls) > 1):
+        raise ValueError("Lateral controls must be in [-1,1]")
+    stations = np.linspace(0., 1., settings.longitudinal_samples, endpoint=not track.closed)
+    control_stations = np.linspace(0., 1., len(controls), endpoint=not track.closed)
+    if track.closed:
+        offset = CubicSpline(np.r_[control_stations, 1.], np.r_[controls, controls[0]], bc_type="periodic")(stations)
+        source_stations = np.r_[track.parameter, 1.]
+        left = PchipInterpolator(source_stations, np.vstack((track.left, track.left[0])), axis=0)(stations)
+        right = PchipInterpolator(source_stations, np.vstack((track.right, track.right[0])), axis=0)(stations)
+    else:
+        offset = CubicSpline(control_stations, controls, bc_type="natural")(stations)
+        left = PchipInterpolator(track.parameter, track.left, axis=0)(stations)
+        right = PchipInterpolator(track.parameter, track.right, axis=0)(stations)
+    radius = np.hypot(vehicle.external_length, vehicle.external_width)/2+vehicle.boundary_margin
+    half_width = np.linalg.norm(right-left, axis=1)/2
+    if np.any(half_width <= radius):
+        raise ValueError("Track too narrow for the assumed vehicle footprint")
+    anchors = (left+right)/2 + offset[:, None]*(right-left)/2*(1-radius/half_width)[:, None]
+    if track.closed:
+        spline = CubicSpline(np.r_[stations, 1.], np.vstack((anchors, anchors[0])), axis=0, bc_type="periodic")
+    else:
+        spline = CubicSpline(stations, anchors, axis=0, bc_type="natural")
+    dense_parameter = np.linspace(0., 1., settings.curvature_resolution+1)
+    dense_points = spline(dense_parameter)
+    dense_arc = np.r_[0., np.cumsum(np.linalg.norm(np.diff(dense_points, axis=0), axis=1))]
+    if np.any(np.diff(dense_arc) <= EPS):
+        raise ValueError("Degenerate continuous trajectory")
+    length = float(dense_arc[-1])
+    sample_arc = np.linspace(0., length, settings.longitudinal_samples, endpoint=not track.closed)
+    parameter = np.interp(sample_arc, dense_arc, dense_parameter)
+    position = spline(parameter)
+    first, second, third = spline(parameter, 1), spline(parameter, 2), spline(parameter, 3)
+    tangent_norm = np.linalg.norm(first, axis=1)
+    if np.any(tangent_norm <= EPS):
+        raise ValueError("Zero trajectory tangent")
+    numerator = first[:, 0]*second[:, 1]-first[:, 1]*second[:, 0]
+    curvature = numerator/tangent_norm**3
+    numerator_derivative = first[:, 0]*third[:, 1]-first[:, 1]*third[:, 0]
+    gradient = (numerator_derivative/tangent_norm**3
+                -3*numerator*np.sum(first*second, axis=1)/tangent_norm**5)/tangent_norm
+    segment_length = np.diff(np.r_[sample_arc, length]) if track.closed else np.diff(sample_arc)
+    dense_check = dense_points[:-1] if track.closed else dense_points
+    clearance = trajectory_clearance(dense_check, track, vehicle)
+    if has_self_intersection(dense_check, track.closed):
+        raise ValueError("Candidate trajectory self-intersects")
+    return Trajectory(position, np.unwrap(np.arctan2(first[:, 1], first[:, 0])),
+                      curvature, gradient, sample_arc, segment_length, length,
+                      track.closed, clearance)
+
 # 5. Optimization
 
 # 6. Visualization and printed output
