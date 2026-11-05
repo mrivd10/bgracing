@@ -737,6 +737,55 @@ def generate_trajectory(track: Track, controls: Array, vehicle: VehicleParameter
                       curvature, gradient, sample_arc, segment_length, length,
                       track.closed, clearance)
 
+def validated_cone_pairs(left: Array, right: Array, closed: bool, resolution: int) -> tuple[Array, Array] | None:
+    """Use row pairs only after transverse, cell-orientation, and crossing checks.
+
+    The 0.35 tangent fraction allows modest survey skew (<~20 degrees).
+    Shared center-station interpolation retains verified correspondence.
+    """
+    if left.shape != right.shape:
+        return None
+    center = (left+right)/2
+    tangent = np.roll(center, -1, axis=0)-np.roll(center, 1, axis=0) if closed else np.gradient(center, axis=0)
+    width_vector = right-left
+    width = np.linalg.norm(width_vector, axis=1)
+    tangent_length = np.linalg.norm(tangent, axis=1)
+    if np.any(width <= EPS) or np.any(tangent_length <= EPS):
+        return None
+    tangent /= tangent_length[:, None]
+    if np.any(np.abs(np.sum(tangent*width_vector, axis=1))/width > 0.35):
+        return None
+    side = tangent[:, 0]*width_vector[:, 1]-tangent[:, 1]*width_vector[:, 0]
+    if not (np.all(side < 0) or np.all(side > 0)):
+        return None
+    # Explicitly reject any two crossing transverse connectors.
+    for i in range(len(left)-1):
+        q = left[i+1:]-left[i]
+        d = width_vector[i+1:]
+        denominator = width_vector[i, 0]*d[:, 1]-width_vector[i, 1]*d[:, 0]
+        a = np.divide(q[:, 0]*d[:, 1]-q[:, 1]*d[:, 0], denominator,
+                      out=np.full(len(d), np.inf), where=np.abs(denominator) > EPS)
+        b = np.divide(q[:, 0]*width_vector[i, 1]-q[:, 1]*width_vector[i, 0], denominator,
+                      out=np.full(len(d), np.inf), where=np.abs(denominator) > EPS)
+        if np.any((a >= 0) & (a <= 1) & (b >= 0) & (b <= 1)):
+            return None
+    if np.all(side > 0):
+        left, right, center = left[::-1], right[::-1], center[::-1]
+    combined = np.column_stack((left, right))
+    if closed:
+        padded_center = np.vstack((center[-3:], center, center[:3]))
+        padded = np.vstack((combined[-3:], combined, combined[:3]))
+        arc = np.r_[0., np.cumsum(np.linalg.norm(np.diff(padded_center, axis=0), axis=1))]
+        stations = np.linspace(arc[3], arc[len(center)+3], resolution, endpoint=False)
+    else:
+        padded = combined
+        arc = np.r_[0., np.cumsum(np.linalg.norm(np.diff(center, axis=0), axis=1))]
+        stations = np.linspace(0., arc[-1], resolution)
+    if np.any(np.diff(arc) <= EPS):
+        return None
+    result = PchipInterpolator(arc, padded, axis=0)(stations)
+    return result[:, :2], result[:, 2:]
+
 # 5. Optimization
 
 # 6. Visualization and printed output
