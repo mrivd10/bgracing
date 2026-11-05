@@ -114,4 +114,27 @@ class PhysicsTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 evaluate_vehicle_state(*values, p)
 
+    def test_closed_speed_profile_and_candidate_geometry(self):
+        p = VehicleParameters()
+        settings = replace(SolverSettings(), longitudinal_samples=48, geometry_samples=96,
+                           curvature_resolution=240, interpolation_resolution=240, control_points=8)
+        theta = np.linspace(0., 2*np.pi, 240, endpoint=False)
+        radial = np.column_stack((np.cos(theta), np.sin(theta)))
+        track = Track(36*radial, 44*radial, 40*radial, theta/(2*np.pi), True, 80*np.pi, ())
+        line = generate_trajectory(track, np.zeros(8), p, settings)
+        np.testing.assert_allclose(line.spline(0.), line.spline(1.), atol=1e-10)
+        np.testing.assert_allclose(line.spline(0., 1), line.spline(1., 1), atol=1e-8)
+        self.assertGreater(line.boundary_clearance, 0.)
+        np.testing.assert_allclose(line.curvature, 1/40, atol=5e-5)
+        shifted = generate_trajectory(track, np.full(8, .3), p, settings)
+        self.assertGreater(shifted.length, line.length)
+        self.assertFalse(np.allclose(shifted.curvature, line.curvature))
+        result = calculate_speed_profile(line, p, settings)
+        self.assertTrue(result.feasible, result.message)
+        self.assertTrue(np.all(result.state.feasible))
+        self.assertLessEqual(result.state.utilization.max(), 1.+1e-8)
+        self.assertAlmostEqual(result.acceleration[-1], (result.speed[0]**2-result.speed[-1]**2)/(2*line.segment_length[-1]))
+        exaggerated = validate_speed_profile(line, np.full(48, 45.), p, settings)[3]
+        self.assertFalse(np.all(exaggerated.feasible))
+
     # More physics tests
