@@ -1,0 +1,241 @@
+{
+  "result_type": "SIMULATION ESTIMATE — ASSUMED vehicle parameters; no experimental validation",
+  "topology": "closed",
+  "vehicle_mass_kg": 300,
+  "maximum_vehicle_speed_m_per_s": 45,
+  "track_centerline_length_m": 3920.257305781549,
+  "racing_line_length_m": 3891.600710682365,
+  "estimated_lap_time_s": 121.00482521133102,
+  "centerline_baseline_time_s": 123.9476551272351,
+  "improvement_s": 2.9428299159040705,
+  "improvement_percent": 2.374252189670864,
+  "average_speed_m_per_s": 32.16070684690309,
+  "peak_speed_m_per_s": 37.60498465545473,
+  "maximum_lateral_acceleration_m_per_s2": 23.02259020896478,
+  "maximum_braking_deceleration_m_per_s2": 15.593568320901488,
+  "maximum_longitudinal_acceleration_m_per_s2": 5.1168435910125885,
+  "maximum_tire_utilization": 0.9999846682956429,
+  "minimum_normal_force_N": 215.72452835768195,
+  "wheel_lift_events": 0,
+  "maximum_battery_power_W": 39999.859103586554,
+  "maximum_regenerative_power_W": 20000.000000000004,
+  "minimum_conservative_boundary_clearance_m": 0.19532414239102858,
+  "all_model_constraints_satisfied": true,
+  "baseline_model_constraints_satisfied": true,
+  "candidate_evaluations": 144,
+  "speed_solver": "Propagation converged; 34 local dense-validation repair passes; endpoint speeds satisfied.",
+  "track_notes": [
+    "Ignored 2 empty coordinate separator rows; source unchanged.",
+    "Topology: closed (auto; closure evidence [True, True]).",
+    "Original row pairs verified: transverse alignment, side orientation, no connector crossings."
+  ],
+  "source_csv_sha256": "890bddb3b8a2e9844bcc16555ff51ae5aad901b4cd1fc7f8bec3436596ba68e1",
+  "vehicle_parameters": {
+    "mass": 300,
+    "cg_x": -0.8,
+    "cg_y": 0,
+    "cg_z": 0.28,
+    "wheelbase": 1.6,
+    "front_track": 1.25,
+    "rear_track": 1.2,
+    "external_width": 1.5,
+    "external_length": 2.8,
+    "yaw_inertia": 120,
+    "rolling_radius": 0.23,
+    "mu_longitudinal": 1.7,
+    "mu_lateral": 1.8,
+    "cornering_stiffness": 15000,
+    "tire_reference_load": 750,
+    "tire_load_sensitivity": 0.12,
+    "friction_exponent": 2,
+    "small_slip_limit": 0.12,
+    "front_left": {
+      "maximum_torque": 140,
+      "maximum_power": 12000,
+      "maximum_speed": 240,
+      "efficiency": 0.92,
+      "regenerative_torque": 60,
+      "torque_speed_curve": [
+        [
+          0,
+          140
+        ],
+        [
+          60,
+          140
+        ],
+        [
+          90,
+          133.333333
+        ],
+        [
+          120,
+          100
+        ],
+        [
+          180,
+          66.666667
+        ],
+        [
+          240,
+          50
+        ]
+      ]
+    },
+    "front_right": {
+      "maximum_torque": 140,
+      "maximum_power": 12000,
+      "maximum_speed": 240,
+      "efficiency": 0.92,
+      "regenerative_torque": 60,
+      "torque_speed_curve": [
+        [
+          0,
+          140
+        ],
+        [
+          60,
+          140
+        ],
+        [
+          90,
+          133.333333
+        ],
+        [
+          120,
+          100
+        ],
+        [
+          180,
+          66.666667
+        ],
+        [
+          240,
+          50
+        ]
+      ]
+    },
+    "rear_left": {
+      "maximum_torque": 140,
+      "maximum_power": 12000,
+      "maximum_speed": 240,
+      "efficiency": 0.92,
+      "regenerative_torque": 60,
+      "torque_speed_curve": [
+        [
+          0,
+          140
+        ],
+        [
+          60,
+          140
+        ],
+        [
+          90,
+          133.333333
+        ],
+        [
+          120,
+          100
+        ],
+        [
+          180,
+          66.666667
+        ],
+        [
+          240,
+          50
+        ]
+      ]
+    },
+    "rear_right": {
+      "maximum_torque": 140,
+      "maximum_power": 12000,
+      "maximum_speed": 240,
+      "efficiency": 0.92,
+      "regenerative_torque": 60,
+      "torque_speed_curve": [
+        [
+          0,
+          140
+        ],
+        [
+          60,
+          140
+        ],
+        [
+          90,
+          133.333333
+        ],
+        [
+          120,
+          100
+        ],
+        [
+          180,
+          66.666667
+        ],
+        [
+          240,
+          50
+        ]
+      ]
+    },
+    "battery_power": 40000,
+    "battery_regen_power": 20000,
+    "regen_minimum_speed": 1,
+    "mechanical_brake_torque": 450,
+    "front_brake_bias": 0.6,
+    "front_drive_fraction": 0.5,
+    "air_density": 1.225,
+    "downforce_area": 3,
+    "drag_area": 1,
+    "aero_front_fraction": 0.45,
+    "front_roll_fraction": 0.55,
+    "front_roll_center": 0.035,
+    "rear_roll_center": 0.045,
+    "wheel_lift_threshold": 5,
+    "maximum_speed": 45,
+    "maximum_steering": 0.5,
+    "grip_safety_factor": 0.92,
+    "boundary_margin": 0.4,
+    "gravity": 9.80665
+  },
+  "solver_settings": {
+    "longitudinal_samples": 180,
+    "lateral_candidates": 7,
+    "interpolation_resolution": 1600,
+    "curvature_resolution": 720,
+    "geometry_samples": 180,
+    "control_points": 12,
+    "optimization_sweeps": 2,
+    "speed_iterations": 120,
+    "bisection_iterations": 18,
+    "acceleration_speed_samples": 24,
+    "speed_tolerance": 0.0001,
+    "feasibility_tolerance": 0.00002,
+    "constraint_substeps": 3,
+    "closure_gap_ratio": 1.8,
+    "maximum_ordering_jump_ratio": 5,
+    "minimum_speed": 0.05,
+    "speed_reserve": 0.98,
+    "lateral_search_span": 0.75,
+    "acceleration_search_limit": 25,
+    "start_speed": 0,
+    "finish_speed": null
+  },
+  "lateral_controls": [
+    0.75,
+    0,
+    0.625,
+    0,
+    -0.25,
+    0.5,
+    0.25,
+    0,
+    0,
+    0,
+    0.25,
+    -0.125
+  ]
+}
