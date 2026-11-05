@@ -912,7 +912,7 @@ def calculate_speed_profile(trajectory: Trajectory, vehicle: VehicleParameters,
 
     Speeds decrease monotonically from local ceilings. Closed sweeps wrap through
     the last-to-first segment; no artificial standing start is imposed. A small
-    numerical reserve and, if needed, uniform speed reduction make the result a
+    numerical reserve and, if needed, local speed reductions make the result a
     conservative feasible estimate, not a proof of the globally fastest profile.
     """
     if trajectory.boundary_clearance < 0:
@@ -934,18 +934,8 @@ def calculate_speed_profile(trajectory: Trajectory, vehicle: VehicleParameters,
     iteration = 0
     for iteration in range(1, settings.speed_iterations+1):
         previous = speed.copy()
-        # Query the current speed during each sequential step. Using limits
-        # frozen at the pre-sweep ceiling would permanently suppress acceleration.
-        for i in range(count):
-            j = (i+1) % len(speed)
-            accelerate = np.interp(speed[i], envelope_speed[i], drive_envelope[i])
-            reachable = np.sqrt(max(0., speed[i]**2+2*accelerate*trajectory.segment_length[i]))
-            speed[j] = min(speed[j], reachable)
-        for i in range(count-1, -1, -1):
-            j = (i+1) % len(speed)
-            brake = np.interp(speed[j], envelope_speed[j], brake_envelope[j])
-            reachable = np.sqrt(max(0., speed[j]**2-2*brake*trajectory.segment_length[i]))
-            speed[i] = min(speed[i], reachable)
+        speed = propagate_speed_sweep(speed, trajectory.segment_length, envelope_speed,
+                                      drive_envelope, brake_envelope)
         if np.max(np.abs(previous-speed)) < settings.speed_tolerance:
             converged = True
             break
@@ -954,7 +944,17 @@ def calculate_speed_profile(trajectory: Trajectory, vehicle: VehicleParameters,
         trajectory, speed, vehicle, settings)
     repair_count = 0
     while not np.all(state.feasible) and repair_count < settings.speed_iterations:
-        speed *= settings.speed_reserve
+        bad_segments = np.unique(segments[~state.feasible])
+        following_indices = (bad_segments+1) % len(speed)
+        # Reduce the faster end to reduce the magnitude of the requested
+        # acceleration. Equal-speed failures require reducing both ends.
+        faster = np.where(speed[bad_segments] >= speed[following_indices],
+                          bad_segments, following_indices)
+        tied = np.abs(speed[bad_segments]-speed[following_indices]) < settings.speed_tolerance
+        affected = np.unique(np.r_[faster, bad_segments[tied], following_indices[tied]])
+        speed[affected] *= settings.speed_reserve
+        speed = propagate_speed_sweep(speed, trajectory.segment_length, envelope_speed,
+                                      drive_envelope, brake_envelope)
         repair_count += 1
         acceleration, distance, check_acceleration, state, segments = validate_speed_profile(
             trajectory, speed, vehicle, settings)
@@ -967,7 +967,7 @@ def calculate_speed_profile(trajectory: Trajectory, vehicle: VehicleParameters,
     feasible = bool(converged and np.all(state.feasible) and np.all(denominator > settings.minimum_speed)
                     and endpoints_ok and np.isfinite(lap_time))
     message = (f"Propagation {'converged' if converged else 'did not converge'}; "
-               f"{repair_count} dense-validation speed reductions; "
+               f"{repair_count} local dense-validation repair passes; "
                f"endpoint speeds {'satisfied' if endpoints_ok else 'NOT satisfied'}.")
     return SimulationResult(trajectory, speed, acceleration, state, lap_time, feasible,
                             iteration, message, distance, check_acceleration)
