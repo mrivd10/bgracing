@@ -66,4 +66,16 @@ class PhysicsTests(unittest.TestCase):
         self.assertTrue(np.isinf(friction_utilization(np.array([1., 0.]), np.zeros(2))))
         self.assertEqual(float(friction_utilization(np.zeros(2), np.zeros(2))), 0.)
 
+    def test_motor_limits(self):
+        motor = MotorParameters()
+        omega = np.array([0., 40., 100., 200., 241.])
+        torque = motor_torque(omega, motor)
+        self.assertTrue(np.all(torque <= motor.maximum_torque))
+        self.assertTrue(np.all(torque*omega <= motor.maximum_power+1e-8))
+        self.assertLess(torque[3], torque[1])
+        self.assertEqual(torque[-1], 0.)
+        self.assertTrue(np.all(motor_torque(omega, motor, True) <= motor.regenerative_torque))
+        with self.assertRaises(ValueError):
+            motor_torque(np.nan, motor)
+
     # More physics tests
