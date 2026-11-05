@@ -241,4 +241,21 @@ class PhysicsTests(unittest.TestCase):
                 self.assertAlmostEqual(clearance, expected)
                 self.assertLess(clearance, 0.)
 
+    def test_solver_counts_require_integers(self):
+        p, settings = VehicleParameters(), SolverSettings()
+        names = ("longitudinal_samples", "interpolation_resolution", "curvature_resolution",
+                 "geometry_samples", "control_points", "lateral_candidates",
+                 "bisection_iterations", "speed_iterations", "constraint_substeps",
+                 "acceleration_speed_samples", "optimization_sweeps")
+        for name in names:
+            for value in (8.5, 8., np.nan, np.inf, True, np.bool_(True), "8", -1):
+                with self.subTest(name=name, value=value):
+                    with self.assertRaisesRegex(ValueError, name):
+                        validate_configuration(p, replace(settings, **{name: value}))
+            # NumPy integer scalars support the same grid and iteration operations.
+            validate_configuration(p, replace(settings, **{name: np.int64(getattr(settings, name))}))
+        validate_configuration(p, replace(settings, optimization_sweeps=0))
+        with self.assertRaisesRegex(ValueError, "control_points"):
+            validate_configuration(p, replace(settings, control_points=3))
+
     # More physics tests
