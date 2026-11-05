@@ -214,15 +214,18 @@ def validate_configuration(vehicle: VehicleParameters, settings: SolverSettings)
                 or not 0 < motor.efficiency <= 1 or not np.isfinite(motor.regenerative_torque)
                 or motor.regenerative_torque < 0):
             raise ValueError("Invalid motor limits")
-    for name in ("longitudinal_samples", "interpolation_resolution", "curvature_resolution", "geometry_samples"):
-        if getattr(settings, name) < 8:
-            raise ValueError(f"{name} must be at least eight")
-    for name in ("control_points", "lateral_candidates", "bisection_iterations",
-                 "speed_iterations", "constraint_substeps", "acceleration_speed_samples"):
-        if getattr(settings, name) < 2:
-            raise ValueError(f"{name} must be at least two")
-    if settings.optimization_sweeps < 0:
-        raise ValueError("optimization_sweeps cannot be negative")
+    count_minimums = {
+        "longitudinal_samples": 8, "interpolation_resolution": 8,
+        "curvature_resolution": 8, "geometry_samples": 8, "control_points": 4,
+        "lateral_candidates": 2, "bisection_iterations": 2, "speed_iterations": 2,
+        "constraint_substeps": 2, "acceleration_speed_samples": 2,
+        "optimization_sweeps": 0,
+    }
+    for name, minimum in count_minimums.items():
+        value = getattr(settings, name)
+        if (isinstance(value, (bool, np.bool_))
+                or not isinstance(value, (int, np.integer)) or value < minimum):
+            raise ValueError(f"{name} must be an integer at least {minimum}")
     for name in ("speed_tolerance", "feasibility_tolerance", "minimum_speed",
                  "acceleration_search_limit", "closure_gap_ratio",
                  "maximum_ordering_jump_ratio"):
@@ -231,8 +234,8 @@ def validate_configuration(vehicle: VehicleParameters, settings: SolverSettings)
     if (not np.isfinite(settings.start_speed) or settings.start_speed < 0
             or (settings.finish_speed is not None and (not np.isfinite(settings.finish_speed) or settings.finish_speed < 0))):
         raise ValueError("Open-path endpoint speeds must be finite and nonnegative")
-    if settings.control_points < 4 or not 0 < settings.speed_reserve < 1 or not 0 < settings.lateral_search_span <= 1:
-        raise ValueError("Need four controls and valid speed/search reserves")
+    if not 0 < settings.speed_reserve < 1 or not 0 < settings.lateral_search_span <= 1:
+        raise ValueError("Invalid speed/search reserves")
 
 # 2. Static calculations
 
