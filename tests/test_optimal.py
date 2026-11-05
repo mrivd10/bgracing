@@ -29,4 +29,14 @@ class PhysicsTests(unittest.TestCase):
                 self.assertAlmostEqual(static["axle_loads"][0], p.mass*p.gravity*(p.wheelbase+p.cg_x)/p.wheelbase)
                 self.assertTrue(np.all(loads > 0))
 
+    def test_aero_and_load_conservation(self):
+        p = VehicleParameters()
+        down, drag = aerodynamic_forces(np.array([0., 10., 20.]), p)
+        np.testing.assert_allclose(down[2], 4*down[1])
+        self.assertAlmostEqual(drag[2], 4*drag[1])
+        loads = normal_loads(np.array([0., 10., 20.]), np.array([0., 3., -4.]),
+                             np.array([0., 5., -6.]), p)
+        np.testing.assert_allclose(loads.sum(axis=-1), p.mass*p.gravity+down.sum(axis=-1))
+        self.assertAlmostEqual(down[1, :2].sum()/down[1].sum(), p.aero_front_fraction)
+
     # More physics tests
