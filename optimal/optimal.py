@@ -1011,4 +1011,85 @@ def simulation_summary(result: SimulationResult, baseline: SimulationResult, tra
         "track_notes": list(track.notes),
     }
 
+def save_results(result: SimulationResult, baseline: SimulationResult, track: Track,
+                 vehicle: VehicleParameters, settings: SolverSettings, controls: Array,
+                 summary: dict[str, Any], output: str | Path, show: bool = False) -> None:
+    """Save speed-colored geometry, dynamics panels, JSON configuration and CSVs."""
+    import matplotlib
+    if not show:
+        matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.collections import LineCollection
+
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=True)
+    position = result.trajectory.position
+    display_position = np.vstack((position, position[0])) if track.closed else position
+    segments = np.stack((display_position[:-1], display_position[1:]), axis=1)
+    fig, axes = plt.subplots(4, 2, figsize=(16, 17), constrained_layout=True)
+    map_axis = axes[0, 0]
+    for boundary, label in ((track.left, "Left boundary"), (track.right, "Right boundary")):
+        plot_points = np.vstack((boundary, boundary[0])) if track.closed else boundary
+        map_axis.plot(*plot_points.T, linewidth=0.8, label=label)
+    center = np.vstack((track.center, track.center[0])) if track.closed else track.center
+    map_axis.plot(*center.T, "--", color="gray", linewidth=0.8, label="Centerline")
+    collection = LineCollection(segments, cmap="turbo", linewidths=2.2)
+    collection.set_array(result.speed[:len(segments)])
+    map_axis.add_collection(collection)
+    map_axis.autoscale()
+    map_axis.set_aspect("equal")
+    map_axis.set(title="Optimized line: speed color", xlabel="X [m]", ylabel="Y [m]")
+    map_axis.legend(fontsize=8)
+    fig.colorbar(collection, ax=map_axis, label="Speed [m/s]")
+    s = result.trajectory.distance
+    axes[0, 1].plot(s, result.speed, label="Optimized")
+    axes[0, 1].plot(baseline.trajectory.distance, baseline.speed, "--", label="Centerline")
+    axes[0, 1].set(title="Speed profile", ylabel="Speed [m/s]")
+    axes[0, 1].legend()
+    axes[1, 0].plot(s, result.speed**2*result.trajectory.curvature)
+    axes[1, 0].set(title="Lateral acceleration", ylabel="Acceleration [m/s²]")
+    axes[1, 1].plot(result.validation_distance, result.validation_acceleration)
+    axes[1, 1].set(title="Longitudinal acceleration", ylabel="Acceleration [m/s²]")
+    for i, wheel in enumerate(WHEELS):
+        axes[2, 0].plot(result.validation_distance, result.state.normal_load[:, i], label=wheel)
+        axes[2, 1].plot(result.validation_distance, result.state.utilization[:, i], label=wheel)
+        axes[3, 1].plot(result.validation_distance, np.rad2deg(result.state.slip_angles[:, i]), label=wheel)
+    axes[2, 0].set(title="Normal tire loads", ylabel="Normal force [N]")
+    axes[2, 1].axhline(1., color="red", linestyle="--", label="Grip limit")
+    axes[2, 1].set(title="Requested tire-force utilization", ylabel="Ellipse norm")
+    axes[3, 0].plot(result.validation_distance, result.state.battery_power/1000, label="Discharge")
+    axes[3, 0].plot(result.validation_distance, result.state.regenerative_power/1000, label="Regeneration")
+    axes[3, 0].set(title="Battery power", ylabel="Electrical power [kW]")
+    axes[3, 1].set(title="Approximate tire slip angles", ylabel="Slip [degrees]")
+    for axis in axes.ravel()[1:]:
+        axis.set_xlabel("Distance along trajectory [m]")
+        axis.grid(alpha=0.25)
+    for axis in (axes[2, 0], axes[2, 1], axes[3, 0], axes[3, 1]):
+        axis.legend(fontsize=8)
+    fig.suptitle(f"ASSUMED vehicle — simulation estimate: {result.lap_time:.2f} s; "
+                 f"model constraints {'PASS' if result.feasible else 'FAIL'}")
+    fig.savefig(output/"racing_line.png", dpi=160)
+    if show:
+        plt.show()
+    plt.close(fig)
+    report = {**summary, "vehicle_parameters": asdict(vehicle), "solver_settings": asdict(settings),
+              "lateral_controls": controls.tolist()}
+    (output/"summary.json").write_text(json.dumps(report, indent=2, allow_nan=False)+"\n")
+    pd.DataFrame({"distance_m": s, "x_m": position[:, 0], "y_m": position[:, 1],
+                  "heading_rad": result.trajectory.heading, "curvature_per_m": result.trajectory.curvature,
+                  "speed_m_per_s": result.speed}).to_csv(output/"speed_profile.csv", index=False)
+    validation = {"distance_m": result.validation_distance,
+                  "longitudinal_acceleration_m_per_s2": result.validation_acceleration,
+                  "battery_power_W": result.state.battery_power,
+                  "regenerative_power_W": result.state.regenerative_power,
+                  "feasible": result.state.feasible}
+    for i, wheel in enumerate(WHEELS):
+        validation[f"normal_force_{wheel}_N"] = result.state.normal_load[:, i]
+        validation[f"utilization_{wheel}"] = result.state.utilization[:, i]
+        for j, component in enumerate(("Fx", "Fy")):
+            validation[f"requested_{component}_{wheel}_N"] = result.state.requested_force[:, i, j]
+            validation[f"actual_{component}_{wheel}_N"] = result.state.actual_force[:, i, j]
+            validation[f"available_{component}_{wheel}_N"] = result.state.available_force[:, i, j]
+    pd.DataFrame(validation).to_csv(output/"constraint_validation.csv", index=False)
+
 # 7. Main execution
