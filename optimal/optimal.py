@@ -210,9 +210,10 @@ def validate_configuration(vehicle: VehicleParameters, settings: SolverSettings)
             raise ValueError("Motor curve must span zero to maximum speed, in order")
         if (not all(np.isfinite(x) and x > 0 for x in (
                 motor.maximum_torque, motor.maximum_power, motor.maximum_speed))
-                or not 0 < motor.efficiency <= 1 or motor.regenerative_torque < 0):
+                or not 0 < motor.efficiency <= 1 or not np.isfinite(motor.regenerative_torque)
+                or motor.regenerative_torque < 0):
             raise ValueError("Invalid motor limits")
-    for name in ("longitudinal_samples", "interpolation_resolution", "curvature_resolution"):
+    for name in ("longitudinal_samples", "interpolation_resolution", "curvature_resolution", "geometry_samples"):
         if getattr(settings, name) < 8:
             raise ValueError(f"{name} must be at least eight")
     for name in ("control_points", "lateral_candidates", "bisection_iterations",
@@ -226,8 +227,11 @@ def validate_configuration(vehicle: VehicleParameters, settings: SolverSettings)
                  "maximum_ordering_jump_ratio"):
         if not np.isfinite(getattr(settings, name)) or getattr(settings, name) <= 0:
             raise ValueError(f"{name} must be finite and positive")
-    if settings.start_speed < 0 or (settings.finish_speed is not None and settings.finish_speed < 0):
-        raise ValueError("Open-path endpoint speeds cannot be negative")
+    if (not np.isfinite(settings.start_speed) or settings.start_speed < 0
+            or (settings.finish_speed is not None and (not np.isfinite(settings.finish_speed) or settings.finish_speed < 0))):
+        raise ValueError("Open-path endpoint speeds must be finite and nonnegative")
+    if settings.control_points < 4 or not 0 < settings.speed_reserve < 1 or not 0 < settings.lateral_search_span <= 1:
+        raise ValueError("Need four controls and valid speed/search reserves")
 
 # 2. Static calculations
 
