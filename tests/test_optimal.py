@@ -154,4 +154,29 @@ class PhysicsTests(unittest.TestCase):
         self.assertTrue(np.isfinite(result.lap_time))
         self.assertEqual(len(line.segment_length), len(line.distance)-1)
 
+    def test_track_loading_and_boundary_constraints(self):
+        settings = replace(SolverSettings(), longitudinal_samples=60, geometry_samples=80,
+                           curvature_resolution=360, interpolation_resolution=360)
+        path = Path(__file__).resolve().parents[1]/"BrandsHatchLayout.csv"
+        original = path.read_bytes()
+        track = load_track(path, settings)
+        self.assertTrue(track.closed)
+        self.assertEqual(path.read_bytes(), original)
+        line = generate_trajectory(track, np.zeros(8), VehicleParameters(), settings)
+        self.assertGreater(line.boundary_clearance, 0.)
+        wide = replace(VehicleParameters(), external_width=100.)
+        with self.assertRaises(ValueError):
+            generate_trajectory(track, np.zeros(8), wide, settings)
+        crossing = np.array([[0., 0.], [2., 2.], [0., 2.], [2., 0.]])
+        self.assertTrue(has_self_intersection(crossing, False))
+        with tempfile.TemporaryDirectory() as temporary:
+            csv = Path(temporary)/"track.csv"
+            csv.write_text("x,y,side\n0,4,left\n10,4,left\n20,4,left\n30,4,left\n"
+                           "0,-4,right\n10,-4,right\n20,-4,right\n30,-4,right\n")
+            open_track = load_track(csv, settings)
+            self.assertFalse(open_track.closed)
+            csv.write_text("x,y,side\n0,4,left\n10,,left\n")
+            with self.assertRaises(ValueError):
+                load_track(csv, settings)
+
     # More physics tests
