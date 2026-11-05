@@ -118,9 +118,11 @@ derivatives on closed tracks. Position, heading, signed curvature, curvature
 gradient, and arc length are calculated from that candidate.
 
 Clearance uses a disc enclosing the assumed centered body rectangle, plus the
-boundary margin. This deliberately exceeds a width-only envelope. The smallest
-sampled boundary distance is further reduced by half the largest dense sample
-spacing to guard intervening excursions. Boundary distance and arc length remain
+boundary margin. This deliberately exceeds a width-only envelope. Each trajectory
+sample is compared with every lateral boundary segment, including closed seams,
+so irregular vertex spacing cannot hide a nearby segment. Point batches bound
+temporary memory. The smallest distance is reduced by half the largest dense
+sample chord as a spacing reserve. Spline containment and arc length remain
 numerical approximations, not a formal analytic containment certificate. Open
 entry/exit caps are gates rather than walls. Vehicle length and its centered
 bounding footprint are assumptions to replace with an actual body envelope.

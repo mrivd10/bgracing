@@ -9,7 +9,7 @@ These are numerical simulation results with ASSUMED vehicle inputs, not experime
 .venv/bin/python optimal/optimal.py --output output/final
 ```
 
-The final regression suite passed **12 tests**. The full default search evaluated **144 candidates** and completed successfully. Test runtime: Python **3.13.7** (the available Linux environment); production source syntax was also checked with Python's 3.12 grammar. Python 3.12 is the project target, but a 3.12 interpreter was not available for runtime tests.
+The regression suite passed **14 tests**. The recorded full default search evaluated **144 candidates** and completed successfully. Test runtime: Python **3.13.7** (the available Linux environment); production source syntax was also checked with Python's 3.12 grammar. Python 3.12 is the project target, but a 3.12 interpreter was not available for runtime tests.
 
 Installed scientific libraries: NumPy 2.5.4, SciPy 1.18.1, Pandas 3.1.1, Matplotlib 3.11.2.
 
@@ -42,6 +42,8 @@ Complete settings, per-wheel motor data, and lateral controls are recorded in [e
 
 This check re-evaluated the SAME final continuous line and centerline, with unchanged spline geometry and controls. It did not re-optimize at each resolution.
 
+After correcting boundary distance to check every lateral segment and tightening integer-setting validation, both lines were re-evaluated at all three resolutions below. All lap times and feasibility results were unchanged. The saved line's residual boundary clearance was also rechecked at 0.195324142391 m. The full candidate search was not repeated during this follow-up.
+
 | Speed nodes | Centerline [s] | Fixed optimized line [s] | Model checks |
 |---:|---:|---:|---|
 | 180 | 123.948 | 121.005 | PASS |
@@ -53,6 +55,8 @@ The lap-time estimate is resolution dependent. This table is a sensitivity check
 ## Test coverage and source preservation
 
 Tests cover axle/corner equilibrium and moments, total normal-load conservation, quadratic aero scaling, longitudinal/lateral transfer, wheel unloading, combined-slip utilization and load sensitivity, motor torque/power/speed limits, independent allocation, battery discharge/regen limits, rotated force/yaw equilibrium, invalid inputs, candidate-specific curvature, footprint compliance, open-path launch/stop, closed-track periodicity, and acceleration propagation against an independently feasible reference.
+
+Additional regressions cover nonuniform boundary vertex spacing, long segments with distant endpoints, closed-boundary seams, and invariance under segment subdivision. The reproduced clearance failure reported +1.962 m despite a -1.038 m residual clearance; the exhaustive segment check now rejects it. Every solver sample/iteration count rejects fractional, nonfinite, Boolean, string, and negative values; integer inputs and zero optimization sweeps remain supported.
 
 The CSV contains 156 cones on each side and two empty coordinate separators. Verified original row correspondence is used; automatic topology checks identify a closed track. The source CSV and legacy `bgracing.py` are unchanged from the starting commit. CSV SHA-256:
 
