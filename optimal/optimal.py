@@ -864,6 +864,66 @@ def validate_speed_profile(trajectory: Trajectory, speed: Array, vehicle: Vehicl
     state = evaluate_vehicle_state(check_speed, curvature, acceleration[segments], vehicle, gradient)
     return acceleration, distance, acceleration[segments], state, segments
 
+def calculate_speed_profile(trajectory: Trajectory, vehicle: VehicleParameters,
+                            settings: SolverSettings) -> SimulationResult:
+    """Coupled forward traction/backward braking sweeps, then dense validation.
+
+    Speeds decrease monotonically from local ceilings. Closed sweeps wrap through
+    the last-to-first segment; no artificial standing start is imposed. A small
+    numerical reserve and, if needed, uniform speed reduction make the result a
+    conservative feasible estimate, not a proof of the globally fastest profile.
+    """
+    if trajectory.boundary_clearance < 0:
+        raise ValueError("Candidate violates vehicle footprint/boundary clearance")
+    ceiling = cornering_speed_limits(trajectory, vehicle, settings)
+    speed = ceiling*0.98  # 2% numerical grip reserve before coupled propagation.
+    if not trajectory.closed:
+        if settings.start_speed > speed[0] or (settings.finish_speed is not None and settings.finish_speed > speed[-1]):
+            raise ValueError("Prescribed endpoint speed exceeds local physical limit")
+        speed[0] = settings.start_speed
+        if settings.finish_speed is not None:
+            speed[-1] = settings.finish_speed
+    count = len(trajectory.segment_length)
+    converged = False
+    iteration = 0
+    for iteration in range(1, settings.speed_iterations+1):
+        previous = speed.copy()
+        accelerate, brake = longitudinal_limits(
+            speed, trajectory.curvature, trajectory.curvature_gradient, vehicle, settings)
+        for i in range(count):
+            j = (i+1) % len(speed)
+            reachable = np.sqrt(max(0., speed[i]**2+2*accelerate[i]*trajectory.segment_length[i]))
+            speed[j] = min(speed[j], reachable)
+        for i in range(count-1, -1, -1):
+            j = (i+1) % len(speed)
+            reachable = np.sqrt(max(0., speed[j]**2-2*brake[j]*trajectory.segment_length[i]))
+            speed[i] = min(speed[i], reachable)
+        if np.max(np.abs(previous-speed)) < settings.speed_tolerance:
+            converged = True
+            break
+    # Validate actual acceleration and the candidate's own interior spline curvature.
+    acceleration, distance, check_acceleration, state, segments = validate_speed_profile(
+        trajectory, speed, vehicle, settings)
+    repair_count = 0
+    while not np.all(state.feasible) and repair_count < settings.speed_iterations:
+        speed *= 0.98
+        repair_count += 1
+        acceleration, distance, check_acceleration, state, segments = validate_speed_profile(
+            trajectory, speed, vehicle, settings)
+    next_speed = np.roll(speed, -1) if trajectory.closed else speed[1:]
+    denominator = speed[:count]+next_speed
+    lap_time = float(np.sum(2*trajectory.segment_length/np.maximum(denominator, EPS)))
+    endpoints_ok = trajectory.closed or (
+        abs(speed[0]-settings.start_speed) <= settings.speed_tolerance
+        and (settings.finish_speed is None or abs(speed[-1]-settings.finish_speed) <= settings.speed_tolerance))
+    feasible = bool(converged and np.all(state.feasible) and np.all(denominator > settings.minimum_speed)
+                    and endpoints_ok and np.isfinite(lap_time))
+    message = (f"Propagation {'converged' if converged else 'did not converge'}; "
+               f"{repair_count} dense-validation speed reductions; "
+               f"endpoint speeds {'satisfied' if endpoints_ok else 'NOT satisfied'}.")
+    return SimulationResult(trajectory, speed, acceleration, state, lap_time, feasible,
+                            iteration, message, distance, check_acceleration)
+
 # 6. Visualization and printed output
 
 # 7. Main execution
