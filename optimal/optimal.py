@@ -528,6 +528,110 @@ def has_self_intersection(points: Array, closed: bool) -> bool:
             return True
     return False
 
+def load_track(path: str | Path, settings: SolverSettings,
+               topology: str = "auto") -> Track:
+    """Read untouched CSV, validate ordering, and match boundaries transversely.
+
+    Auto closure is a documented spacing/tangent heuristic; explicit open/closed
+    overrides are available. Equal row counts never imply cone correspondence.
+    Left-boundary normals are intersected with the right polyline, followed by
+    a monotonicity check on matched right-boundary stations.
+    """
+    if topology not in ("auto", "open", "closed"):
+        raise ValueError("topology must be auto, open or closed")
+    data = pd.read_csv(path)
+    if not {"x", "y", "side"}.issubset(data.columns):
+        raise ValueError("CSV requires x,y,side columns")
+    empty = data[["x", "y"]].isna().all(axis=1)
+    notes = [f"Ignored {int(empty.sum())} empty coordinate separator rows; source unchanged."]
+    data = data.loc[~empty].copy()
+    data["side"] = data["side"].astype(str).str.strip().str.lower()
+    if not data["side"].isin(("left", "right")).all():
+        raise ValueError("Unknown boundary side")
+    boundaries = []
+    closure = []
+    for side in ("left", "right"):
+        points = data.loc[data.side == side, ["x", "y"]].to_numpy(dtype=float)
+        if len(points) < 4 or not np.all(np.isfinite(points)):
+            raise ValueError(f"Invalid {side} boundary coordinates")
+        steps = np.linalg.norm(np.diff(points, axis=0), axis=1)
+        if np.any(steps <= EPS) or steps.max() > settings.maximum_ordering_jump_ratio*np.median(steps):
+            raise ValueError(f"Duplicate or inconsistent ordering in {side} cones")
+        gap = np.linalg.norm(points[-1]-points[0])
+        if gap <= EPS:
+            closure.append(True)
+            points = points[:-1]
+        else:
+            seam = (points[0]-points[-1])/gap
+            alignment = min(np.dot(seam, (points[1]-points[0])/steps[0]),
+                            np.dot(seam, (points[-1]-points[-2])/steps[-1]))
+            closure.append(gap <= settings.closure_gap_ratio*np.median(steps) and alignment > 0.5)
+        boundaries.append(points)
+    if topology == "auto" and closure[0] != closure[1]:
+        raise ValueError("Ambiguous topology: specify --topology open or closed")
+    closed = all(closure) if topology == "auto" else topology == "closed"
+    notes.append(f"Topology: {'closed' if closed else 'open'} ({topology}; closure evidence {closure}).")
+    left_raw, right_raw = boundaries
+    # Orient the right boundary to the left without assuming matching row indices.
+    left_tangent = np.roll(left_raw, -1, axis=0)-left_raw if closed else np.gradient(left_raw, axis=0)
+    right_tangent = np.roll(right_raw, -1, axis=0)-right_raw if closed else np.gradient(right_raw, axis=0)
+    _, nearest = cKDTree(right_raw).query(left_raw)
+    if np.median(np.sum(left_tangent*right_tangent[nearest], axis=1)) < 0:
+        right_raw = right_raw[::-1]
+        notes.append("Reversed right boundary in memory to match traversal.")
+    for points in (left_raw, right_raw):
+        if has_self_intersection(points, closed):
+            raise ValueError("Boundary self-intersects; repair source ordering explicitly")
+    left = interpolate_boundary(left_raw, settings.interpolation_resolution, closed)
+    right = interpolate_boundary(right_raw, settings.interpolation_resolution, closed)
+    tangent = np.roll(left, -1, axis=0)-np.roll(left, 1, axis=0) if closed else np.gradient(left, axis=0)
+    tangent /= np.linalg.norm(tangent, axis=1)[:, None]
+    _, nearest = cKDTree(right).query(left)
+    direction = right[nearest]-left
+    cross = tangent[:, 0]*direction[:, 1]-tangent[:, 1]*direction[:, 0]
+    if np.median(cross) > 0:
+        left, right = left[::-1], right[::-1]
+        tangent = -tangent[::-1]
+        notes.append("Reversed traversal in memory so left cones lie on the left.")
+    normal = np.column_stack((tangent[:, 1], -tangent[:, 0]))
+    ends = np.roll(right, -1, axis=0) if closed else right[1:]
+    starts = right if closed else right[:-1]
+    segments = ends-starts
+    matched, stations = [], []
+    for point, ray in zip(left, normal):
+        q = starts-point
+        denominator = ray[0]*segments[:, 1]-ray[1]*segments[:, 0]
+        distance = np.divide(q[:, 0]*segments[:, 1]-q[:, 1]*segments[:, 0], denominator,
+                             out=np.full(len(starts), np.inf), where=np.abs(denominator) > EPS)
+        fraction = np.divide(q[:, 0]*ray[1]-q[:, 1]*ray[0], denominator,
+                             out=np.full(len(starts), np.inf), where=np.abs(denominator) > EPS)
+        valid = (distance > 0) & (fraction >= 0) & (fraction <= 1)
+        if not np.any(valid):
+            if not closed and (np.linalg.norm(point-left[0]) < EPS or np.linalg.norm(point-left[-1]) < EPS):
+                index = 0 if np.linalg.norm(point-left[0]) < EPS else len(right)-1
+                matched.append(right[index])
+                stations.append(float(index))
+                continue
+            raise ValueError("Cannot pair boundaries along transverse normals")
+        index = int(np.argmin(np.where(valid, distance, np.inf)))
+        matched.append(point+distance[index]*ray)
+        stations.append(index+fraction[index])
+    station = np.asarray(stations)
+    if closed:
+        station = np.unwrap(station*2*np.pi/len(right))*len(right)/(2*np.pi)
+    if np.any(np.diff(station) < -1e-6):
+        raise ValueError("Boundary correspondence reverses direction")
+    right_matched = np.asarray(matched)
+    center = (left+right_matched)/2
+    if has_self_intersection(center, closed):
+        raise ValueError("Paired centerline self-intersects")
+    length = float(np.linalg.norm(np.diff(center, axis=0), axis=1).sum())
+    if closed:
+        length += float(np.linalg.norm(center[-1]-center[0]))
+    notes.append("Boundary pairing checked by normal intersections and monotone stations.")
+    return Track(left, right_matched, center,
+                 np.linspace(0., 1., len(center), endpoint=not closed), closed, length, tuple(notes))
+
 # 5. Optimization
 
 # 6. Visualization and printed output
