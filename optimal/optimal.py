@@ -100,6 +100,7 @@ class SolverSettings:
     optimization_sweeps: int = 2
     speed_iterations: int = 120
     bisection_iterations: int = 18
+    acceleration_speed_samples: int = 24  # Force-envelope lookup grid per station.
     speed_tolerance: float = 1e-4
     feasibility_tolerance: float = 2e-5
     constraint_substeps: int = 3
@@ -217,7 +218,7 @@ def validate_configuration(vehicle: VehicleParameters, settings: SolverSettings)
         if getattr(settings, name) < 8:
             raise ValueError(f"{name} must be at least eight")
     for name in ("control_points", "lateral_candidates", "bisection_iterations",
-                 "speed_iterations", "constraint_substeps"):
+                 "speed_iterations", "constraint_substeps", "acceleration_speed_samples"):
         if getattr(settings, name) < 2:
             raise ValueError(f"{name} must be at least two")
     if settings.optimization_sweeps < 0:
@@ -925,19 +926,25 @@ def calculate_speed_profile(trajectory: Trajectory, vehicle: VehicleParameters,
         if settings.finish_speed is not None:
             speed[-1] = settings.finish_speed
     count = len(trajectory.segment_length)
+    envelope_speed = ceiling[:, None]*np.linspace(0., 1., settings.acceleration_speed_samples)
+    drive_envelope, brake_envelope = longitudinal_limits(
+        envelope_speed, trajectory.curvature[:, None], trajectory.curvature_gradient[:, None],
+        vehicle, settings)
     converged = False
     iteration = 0
     for iteration in range(1, settings.speed_iterations+1):
         previous = speed.copy()
-        accelerate, brake = longitudinal_limits(
-            speed, trajectory.curvature, trajectory.curvature_gradient, vehicle, settings)
+        # Query the current speed during each sequential step. Using limits
+        # frozen at the pre-sweep ceiling would permanently suppress acceleration.
         for i in range(count):
             j = (i+1) % len(speed)
-            reachable = np.sqrt(max(0., speed[i]**2+2*accelerate[i]*trajectory.segment_length[i]))
+            accelerate = np.interp(speed[i], envelope_speed[i], drive_envelope[i])
+            reachable = np.sqrt(max(0., speed[i]**2+2*accelerate*trajectory.segment_length[i]))
             speed[j] = min(speed[j], reachable)
         for i in range(count-1, -1, -1):
             j = (i+1) % len(speed)
-            reachable = np.sqrt(max(0., speed[j]**2-2*brake[j]*trajectory.segment_length[i]))
+            brake = np.interp(speed[j], envelope_speed[j], brake_envelope[j])
+            reachable = np.sqrt(max(0., speed[j]**2-2*brake*trajectory.segment_length[i]))
             speed[i] = min(speed[i], reachable)
         if np.max(np.abs(previous-speed)) < settings.speed_tolerance:
             converged = True
