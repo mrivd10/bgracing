@@ -1133,3 +1133,5 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if result.feasible else 1
 
 # 7. Main execution
+if __name__ == "__main__":
+    raise SystemExit(main())
