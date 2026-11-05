@@ -1015,6 +1015,22 @@ def optimize_racing_line(track: Track, vehicle: VehicleParameters, settings: Sol
             break
     return best, baseline, controls, evaluations
 
+def propagate_speed_sweep(speed: Array, segment_length: Array, envelope_speed: Array,
+                          drive_envelope: Array, brake_envelope: Array) -> Array:
+    """Apply one sequential traction/braking sweep, including a closing edge."""
+    updated = speed.copy()
+    for i, distance in enumerate(segment_length):
+        j = (i+1) % len(updated)
+        accelerate = np.interp(updated[i], envelope_speed[i], drive_envelope[i])
+        reachable = np.sqrt(max(0., updated[i]**2+2*accelerate*distance))
+        updated[j] = min(updated[j], reachable)
+    for i in range(len(segment_length)-1, -1, -1):
+        j = (i+1) % len(updated)
+        brake = np.interp(updated[j], envelope_speed[j], brake_envelope[j])
+        reachable = np.sqrt(max(0., updated[j]**2-2*brake*segment_length[i]))
+        updated[i] = min(updated[i], reachable)
+    return updated
+
 # 6. Visualization and printed output
 
 def simulation_summary(result: SimulationResult, baseline: SimulationResult, track: Track,
