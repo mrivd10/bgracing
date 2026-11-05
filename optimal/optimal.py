@@ -91,6 +91,7 @@ class SolverSettings:
     lateral_candidates: int = 7
     interpolation_resolution: int = 1600
     curvature_resolution: int = 720
+    geometry_samples: int = 180  # Fixed spline anchors, independent of speed nodes.
     control_points: int = 12
     optimization_sweeps: int = 2
     speed_iterations: int = 120
@@ -708,7 +709,7 @@ def generate_trajectory(track: Track, controls: Array, vehicle: VehicleParameter
         raise ValueError("At least four finite lateral controls are required")
     if np.any(np.abs(controls) > 1):
         raise ValueError("Lateral controls must be in [-1,1]")
-    stations = np.linspace(0., 1., settings.longitudinal_samples, endpoint=not track.closed)
+    stations = np.linspace(0., 1., settings.geometry_samples, endpoint=not track.closed)
     control_stations = np.linspace(0., 1., len(controls), endpoint=not track.closed)
     if track.closed:
         offset = CubicSpline(np.r_[control_stations, 1.], np.r_[controls, controls[0]], bc_type="periodic")(stations)
