@@ -924,6 +924,49 @@ def calculate_speed_profile(trajectory: Trajectory, vehicle: VehicleParameters,
     return SimulationResult(trajectory, speed, acceleration, state, lap_time, feasible,
                             iteration, message, distance, check_acceleration)
 
+def optimize_racing_line(track: Track, vehicle: VehicleParameters, settings: SolverSettings
+                         ) -> tuple[SimulationResult, SimulationResult, Array, int]:
+    """Optimize smooth lateral controls against fully evaluated estimated lap time.
+
+    Deterministic bounded coordinate search is a local method. Unlike the old
+    two-index DP, every trial has its own geometry and coupled speed history.
+    Failed constraints give an inadmissible candidate, never a lap-time reward.
+    """
+    controls = np.zeros(settings.control_points)
+    baseline = calculate_speed_profile(generate_trajectory(track, controls, vehicle, settings), vehicle, settings)
+    if not baseline.feasible:
+        raise ValueError("Centerline baseline failed physical checks: "+baseline.message)
+    best = baseline
+    evaluations = 1
+    for sweep in range(settings.optimization_sweeps):
+        changed = False
+        span = 0.75/(sweep+1)
+        for index in range(len(controls)):
+            best_value = controls[index]
+            candidates = np.unique(np.clip(
+                controls[index]+np.linspace(-span, span, settings.lateral_candidates), -1., 1.))
+            for value in candidates:
+                if abs(value-controls[index]) < EPS:
+                    continue
+                trial = controls.copy()
+                trial[index] = value
+                evaluations += 1
+                try:
+                    trajectory = generate_trajectory(track, trial, vehicle, settings)
+                    result = calculate_speed_profile(trajectory, vehicle, settings)
+                except (ValueError, np.linalg.LinAlgError):
+                    continue
+                if result.feasible and result.lap_time < best.lap_time-settings.speed_tolerance:
+                    best, best_value = result, float(value)
+            if best_value != controls[index]:
+                controls[index] = best_value
+                changed = True
+            print(f"Search sweep {sweep+1}, control {index+1}/{len(controls)}: "
+                  f"{best.lap_time:.3f} s ({evaluations} candidates)", flush=True)
+        if not changed:
+            break
+    return best, baseline, controls, evaluations
+
 # 6. Visualization and printed output
 
 # 7. Main execution
