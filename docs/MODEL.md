@@ -135,9 +135,11 @@ Each segment uses constant tangential acceleration, so v² is linear in distance
 and its time is 2 ds/(v_start+v_end), including launch from rest.
 
 Dense spline-interior checks and both sides of every speed knot validate actual
-acceleration, forces, slip, steering, and power. If needed, uniform speed reduction
-repairs residual violations; the numerical reserve is configurable. This is
-conservative and can reduce speed on unaffected parts of the lap. Prescribed
+acceleration, forces, slip, steering, and power. Failing segments reduce their
+faster endpoint (both endpoints when speeds are equal), followed by another
+forward/backward sweep. This local repair avoids imposing one corner's required
+speed reduction on the entire lap. The numerical reserve is configurable and
+the repair remains conservative. Prescribed
 nonzero open-path endpoint speeds are never silently changed into accepted
 results: a solution that cannot retain them is reported infeasible.
 
