@@ -310,6 +310,39 @@ def motor_torque(speed: Array | float, motor: MotorParameters, regenerative: boo
     torque = np.minimum(torque, motor.maximum_power / np.maximum(omega, EPS))
     return np.where(omega <= motor.maximum_speed, torque, 0.0)
 
+def slip_angles(speed: Array, curvature: Array, lateral_force: Array, loads: Array,
+                vehicle: VehicleParameters) -> tuple[Array, Array, Array]:
+    """Return steering, tire slip, and vehicle sideslip (rad), approximately.
+
+    Tire slip here = wheel heading minus contact velocity heading (positive Fy).
+    Vehicle sideslip beta = CG velocity heading minus body heading.
+    Steering = wheel heading minus body heading. Linear Fy=C_alpha*alpha is
+    only used below small_slip_limit; the state evaluator rejects larger slips.
+    Ackermann steering and rigid-body wheel velocities supply individual angles.
+    """
+    a, b = static_vehicle_properties(vehicle)["axle_distances"]
+    stiffness = vehicle.cornering_stiffness * (
+        np.maximum(loads, EPS)/vehicle.tire_reference_load)**(1-vehicle.tire_load_sensitivity)
+    axle_force = lateral_force.reshape((*lateral_force.shape[:-1], 2, 2)).sum(axis=-1)
+    axle_stiffness = stiffness.reshape((*stiffness.shape[:-1], 2, 2)).sum(axis=-1)
+    alpha = axle_force / np.maximum(axle_stiffness, EPS)
+    beta = np.arctan(b*curvature) - alpha[..., 1]
+    central_steering = np.arctan(np.tan(beta) + a*curvature) + alpha[..., 0]
+    tangent = np.tan(central_steering)
+    steering = np.zeros_like(lateral_force)
+    steering[..., :2] = np.arctan2(
+        tangent[..., None],
+        1 - tangent[..., None]*np.array([vehicle.front_track/2, -vehicle.front_track/2])/vehicle.wheelbase)
+    positions = static_vehicle_properties(vehicle)["wheel_positions"]
+    yaw_rate = speed * curvature
+    # Use unit speed at standstill to obtain the limiting geometric angles.
+    u = np.where(speed > EPS, speed, 1.0)
+    rate = np.where(speed > EPS, yaw_rate, curvature)
+    vx = u[..., None]*np.cos(beta[..., None]) - rate[..., None]*positions[:, 1]
+    vy = u[..., None]*np.sin(beta[..., None]) + rate[..., None]*positions[:, 0]
+    tire_slip = steering - np.arctan2(vy, vx)
+    return steering, tire_slip, beta
+
 # 4. Track processing and racing-line generation
 
 # 5. Optimization
