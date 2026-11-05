@@ -501,6 +501,33 @@ def interpolate_boundary(points: Array, resolution: int, closed: bool) -> Array:
     return PchipInterpolator(arc, padded, axis=0)(
         np.linspace(start, finish, resolution, endpoint=not closed))
 
+def has_self_intersection(points: Array, closed: bool) -> bool:
+    """Detect nonadjacent polyline crossings, including collinear overlaps."""
+    start = points if closed else points[:-1]
+    end = np.roll(points, -1, axis=0) if closed else points[1:]
+    delta = end-start
+    for i in range(len(start)):
+        j = np.arange(i+2, len(start))
+        if closed and i == 0:
+            j = j[j != len(start)-1]
+        if not len(j):
+            continue
+        q = start[j]-start[i]
+        cross = delta[i, 0]*delta[j, 1]-delta[i, 1]*delta[j, 0]
+        t = np.divide(q[:, 0]*delta[j, 1]-q[:, 1]*delta[j, 0], cross,
+                      out=np.full(len(j), np.inf), where=np.abs(cross) > EPS)
+        u = np.divide(q[:, 0]*delta[i, 1]-q[:, 1]*delta[i, 0], cross,
+                      out=np.full(len(j), np.inf), where=np.abs(cross) > EPS)
+        if np.any((t >= 0) & (t <= 1) & (u >= 0) & (u <= 1)):
+            return True
+        collinear = (np.abs(cross) <= EPS) & (np.abs(q[:, 0]*delta[i, 1]-q[:, 1]*delta[i, 0]) <= EPS)
+        projection = q @ delta[i] / max(float(delta[i] @ delta[i]), EPS)
+        projection_end = (end[j]-start[i]) @ delta[i] / max(float(delta[i] @ delta[i]), EPS)
+        if np.any(collinear & (np.maximum(projection, projection_end) >= 0)
+                  & (np.minimum(projection, projection_end) <= 1)):
+            return True
+    return False
+
 # 5. Optimization
 
 # 6. Visualization and printed output
