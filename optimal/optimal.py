@@ -632,6 +632,51 @@ def load_track(path: str | Path, settings: SolverSettings,
     return Track(left, right_matched, center,
                  np.linspace(0., 1., len(center), endpoint=not closed), closed, length, tuple(notes))
 
+def trajectory_clearance(points: Array, track: Track, vehicle: VehicleParameters) -> float:
+    """Conservative swept-disc clearance to lateral boundaries, in meters.
+
+    A disc enclosing the ASSUMED rectangular body accounts for both width and
+    length at any heading. Subtract half the largest sample spacing so a
+    between-sample excursion cannot be accepted just from sampled clearance.
+    Open path end caps are entry/exit gates, not physical walls.
+    """
+    from matplotlib.path import Path as PolygonPath
+
+    if track.closed:
+        left_polygon = PolygonPath(np.vstack((track.left, track.left[0])))
+        right_polygon = PolygonPath(np.vstack((track.right, track.right[0])))
+        inside = left_polygon.contains_points(points) ^ right_polygon.contains_points(points)
+    else:
+        polygon = np.vstack((track.left, track.right[::-1], track.left[:1]))
+        inside = PolygonPath(polygon).contains_points(points, radius=1e-7)
+        # Entry/exit gate centers are allowed on the cap itself.
+        for endpoint in (track.center[0], track.center[-1]):
+            inside |= np.linalg.norm(points-endpoint, axis=1) < 1e-7
+    if not np.all(inside):
+        return -np.inf
+    minimum = np.inf
+    for boundary in (track.left, track.right):
+        # Nearest vertices identify neighboring segments on the dense polyline.
+        _, nearest = cKDTree(boundary).query(points, k=min(4, len(boundary)))
+        indices = np.concatenate((nearest, nearest-1), axis=1)
+        if track.closed:
+            indices %= len(boundary)
+            following = (indices+1) % len(boundary)
+        else:
+            indices = np.clip(indices, 0, len(boundary)-2)
+            following = indices+1
+        a, b = boundary[indices], boundary[following]
+        segment = b-a
+        fraction = np.clip(np.sum((points[:, None]-a)*segment, axis=-1)
+                           / np.maximum(np.sum(segment*segment, axis=-1), EPS), 0., 1.)
+        distance = np.linalg.norm(points[:, None]-a-fraction[..., None]*segment, axis=-1)
+        minimum = min(minimum, float(distance.min()))
+    lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    if track.closed:
+        lengths = np.r_[lengths, np.linalg.norm(points[0]-points[-1])]
+    body_radius = np.hypot(vehicle.external_length, vehicle.external_width)/2
+    return float(minimum-body_radius-vehicle.boundary_margin-lengths.max()/2)
+
 # 5. Optimization
 
 # 6. Visualization and printed output
