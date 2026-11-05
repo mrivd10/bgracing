@@ -1,182 +1,171 @@
-import pandas as pd
+"""Four-motor quasi-static lap-time estimation, using ASSUMED vehicle data.
+
+SI units. X forward, Y left, Z up; configuration origin = front axle midpoint.
+A CG behind the front axle therefore has negative cg_x. Wheel order: FL FR RL RR.
+Positive curvature and yaw turn left. Flat-road model, not experimental validation.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+from dataclasses import asdict, dataclass, field, replace
+from pathlib import Path
+from typing import Any
+
 import numpy as np
-import matplotlib.pyplot as plt
+import pandas as pd
+from numpy.typing import NDArray
+from scipy.interpolate import CubicSpline, PchipInterpolator
+from scipy.spatial import cKDTree
 
-file_path = 'BrandsHatchLayout.csv'
-data = pd.read_csv(file_path).dropna()
+Array = NDArray[np.float64]
+WHEELS = ("FL", "FR", "RL", "RR")
+EPS = 1e-10  # Numerical zero, not physical tuning.
 
-left_cones = data[data['side'] == 'left']
-right_cones = data[data['side'] == 'right']
+# 1. Vehicle parameters and physical constants
+@dataclass(frozen=True)
+class MotorParameters:
+    """ASSUMED shaft data for one direct-drive in-wheel motor."""
+    maximum_torque: float = 140.0  # ASSUMED N m peak motoring torque.
+    maximum_power: float = 12000.0  # ASSUMED W mechanical shaft power.
+    maximum_speed: float = 240.0  # ASSUMED rad/s rotor limit.
+    efficiency: float = 0.92  # ASSUMED electrical/mechanical efficiency.
+    regenerative_torque: float = 60.0  # ASSUMED N m peak regeneration.
+    # ASSUMED (rad/s, N m) curve; interpolated and capped by torque/power.
+    torque_speed_curve: tuple[tuple[float, float], ...] = (
+        (0., 140.), (60., 140.), (90., 133.333333),
+        (120., 100.), (180., 66.666667), (240., 50.),
+    )
 
-def generate_centerline(left_x, left_y, right_x, right_y):
-    """
-    Generate the centerline of the track by averaging the positions of left and right cones.
-    
-    Parameters:
-    - left_x, left_y: Coordinates of the left cones.
-    - right_x, right_y: Coordinates of the right cones.
-    
-    Returns:
-    - center_x, center_y: Coordinates of the centerline.
-    """
-    center_x = (left_x + right_x) / 2
-    center_y = (left_y + right_y) / 2
-    return center_x, center_y
 
-def calculate_curvature(x, y):
-    """
-    Calculate the curvature of the track centerline using the formula:
-    k = |x''y' - y''x'| / (x'^2 + y'^2)^(3/2)
-    
-    Parameters:
-    - x, y: Coordinates of the centerline.
-    
-    Returns:
-    - curvature: Array of curvature values along the centerline.
-    """
-    dx = np.gradient(x)
-    dy = np.gradient(y)
-    ddx = np.gradient(dx)
-    ddy = np.gradient(dy)
-    curvature = np.abs(ddx * dy - dx * ddy) / (dx**2 + dy**2) ** 1.5
-    curvature[~np.isfinite(curvature)] = 0
-    return curvature
+@dataclass(frozen=True)
+class VehicleParameters:
+    """Central editable ASSUMED configuration, separate from simulation state."""
+    mass: float = 300.0  # ASSUMED kg including driver.
+    cg_x: float = -0.80  # ASSUMED m behind front axle in X-forward frame.
+    cg_y: float = 0.0  # ASSUMED m left of vehicle center plane.
+    cg_z: float = 0.28  # ASSUMED m above flat ground.
+    wheelbase: float = 1.60  # ASSUMED m.
+    front_track: float = 1.25  # ASSUMED m front contact spacing.
+    rear_track: float = 1.20  # ASSUMED m rear contact spacing.
+    external_width: float = 1.50  # ASSUMED m body width.
+    external_length: float = 2.80  # ASSUMED m conservative footprint length.
+    yaw_inertia: float = 120.0  # ASSUMED kg m^2 about CG.
+    rolling_radius: float = 0.23  # ASSUMED m effective tire radius.
+    mu_longitudinal: float = 1.70  # ASSUMED at reference load.
+    mu_lateral: float = 1.80  # ASSUMED at reference load.
+    cornering_stiffness: float = 15000.0  # ASSUMED N/rad per reference tire.
+    tire_reference_load: float = 750.0  # ASSUMED N calibration load.
+    tire_load_sensitivity: float = 0.12  # ASSUMED capacity exponent = 1-s.
+    friction_exponent: float = 2.0  # ASSUMED 2 = friction ellipse.
+    small_slip_limit: float = 0.12  # ASSUMED rad linear model validity.
+    front_left: MotorParameters = field(default_factory=MotorParameters)
+    front_right: MotorParameters = field(default_factory=MotorParameters)
+    rear_left: MotorParameters = field(default_factory=MotorParameters)
+    rear_right: MotorParameters = field(default_factory=MotorParameters)
+    battery_power: float = 40000.0  # ASSUMED W electrical discharge cap.
+    battery_regen_power: float = 20000.0  # ASSUMED W charge acceptance cap.
+    regen_minimum_speed: float = 1.0  # ASSUMED m/s regen cutoff.
+    mechanical_brake_torque: float = 450.0  # ASSUMED N m per wheel cap.
+    front_brake_bias: float = 0.60  # ASSUMED total brake force front fraction.
+    front_drive_fraction: float = 0.50  # ASSUMED fixed drive axle fraction.
+    air_density: float = 1.225  # ASSUMED kg/m^3 ambient density.
+    downforce_area: float = 3.0  # ASSUMED m^2 positive Cl*A downforce.
+    drag_area: float = 1.0  # ASSUMED m^2 Cd*A; drag acts at CG height.
+    aero_front_fraction: float = 0.45  # ASSUMED front downforce fraction.
+    front_roll_fraction: float = 0.55  # ASSUMED elastic roll stiffness split.
+    front_roll_center: float = 0.035  # ASSUMED m above ground.
+    rear_roll_center: float = 0.045  # ASSUMED m above ground.
+    wheel_lift_threshold: float = 5.0  # ASSUMED N; reject unloading.
+    maximum_speed: float = 45.0  # ASSUMED m/s.
+    maximum_steering: float = 0.50  # ASSUMED rad road-wheel angle.
+    grip_safety_factor: float = 0.92  # ASSUMED retained tire capacity fraction.
+    boundary_margin: float = 0.40  # ASSUMED m beyond body footprint.
+    gravity: float = 9.80665  # STANDARD m/s^2, not measured local gravity.
 
-def find_fastest_racing_line(
-    center_x,
-    center_y,
-    curvature,
-    left_x,
-    left_y,
-    right_x,
-    right_y,
-    track_width,
-    max_velocity,
-    max_lateral_acceleration,
-):
-    """
-    Use dynamic programming to find the fastest racing line.
 
-    Parameters:
-    - center_x, center_y: Coordinates of the track centerline.
-    - left_x, left_y: Coordinates of the left cones.
-    - right_x, right_y: Coordinates of the right cones.
-    - curvature: Curvature values of the centerline.
-    - track_width: Discretized width of the track.
-    - max_velocity: Maximum velocity of the vehicle (m/s).
-    - max_lateral_acceleration: Maximum lateral acceleration (m/s²).
-    
-    Returns:
-    - optimal_path: Optimal racing line as a list of indices.
-    """
-    # Notes:
-    # - track_width represents the discretization resolution across the lane; a higher
-    #   value yields finer lateral steps at the cost of computation time.
-    # - offset_fraction converts a discrete step into a symmetric lateral fraction, so
-    #   j = track_width // 2 follows the centerline while the extremes trace the edges.
-    # - allowable_velocity uses a curvature floor to avoid division-by-zero and ensures
-    #   the dynamic-programming cost stays physically meaningful.
-    track_length = len(center_x)
-    dp_cost = np.full((track_length, track_width), np.inf)
-    dp_path = np.zeros((track_length, track_width), dtype=int)
+@dataclass(frozen=True)
+class SolverSettings:
+    """Numerical choices, not measured vehicle properties."""
+    longitudinal_samples: int = 180
+    lateral_candidates: int = 7
+    interpolation_resolution: int = 1600
+    curvature_resolution: int = 720
+    control_points: int = 12
+    optimization_sweeps: int = 2
+    speed_iterations: int = 120
+    bisection_iterations: int = 18
+    speed_tolerance: float = 1e-4
+    feasibility_tolerance: float = 2e-5
+    constraint_substeps: int = 3
+    closure_gap_ratio: float = 1.8
+    maximum_ordering_jump_ratio: float = 5.0
+    minimum_speed: float = 0.05
+    acceleration_search_limit: float = 25.0  # m/s^2 checked numerical bracket.
+    start_speed: float = 0.0  # m/s OPEN paths only.
+    finish_speed: float | None = None  # Free OPEN terminal speed if None.
 
-    def offset_fraction(index: int) -> float:
-        return (index - track_width // 2) / track_width
 
-    dp_cost[-1, :] = 0
+@dataclass
+class Track:
+    left: Array
+    right: Array
+    center: Array
+    parameter: Array
+    closed: bool
+    length: float
+    notes: tuple[str, ...]
 
-    for i in range(track_length - 2, -1, -1):
-        for j in range(track_width):
-            current_offset = offset_fraction(j)
-            current_x = center_x[i] + current_offset * (right_x[i] - left_x[i])
-            current_y = center_y[i] + current_offset * (right_y[i] - left_y[i])
 
-            curvature_safe = max(curvature[i], 1e-6)
-            allowable_velocity = min(
-                max_velocity,
-                np.sqrt(max_lateral_acceleration / curvature_safe),
-            )
+@dataclass
+class Trajectory:
+    position: Array
+    heading: Array
+    curvature: Array
+    curvature_gradient: Array
+    distance: Array
+    segment_length: Array
+    length: float
+    closed: bool
+    boundary_clearance: float
 
-            for k in range(track_width):
-                next_offset = offset_fraction(k)
-                next_x = center_x[i + 1] + next_offset * (right_x[i + 1] - left_x[i + 1])
-                next_y = center_y[i + 1] + next_offset * (right_y[i + 1] - left_y[i + 1])
 
-                distance = np.hypot(next_x - current_x, next_y - current_y)
-                time = distance / allowable_velocity
+@dataclass
+class VehicleState:
+    normal_load: Array
+    available_force: Array
+    requested_force: Array
+    actual_force: Array
+    utilization: Array
+    battery_power: Array
+    regenerative_power: Array
+    yaw_moment: Array
+    steering: Array
+    slip_angles: Array
+    wheel_lift: NDArray[np.bool_]
+    feasible: NDArray[np.bool_]
 
-                cost = dp_cost[i + 1, k] + time
-                if cost < dp_cost[i, j]:
-                    dp_cost[i, j] = cost
-                    dp_path[i, j] = k
 
-    optimal_path = []
-    current = np.argmin(dp_cost[0, :])
-    for i in range(track_length):
-        optimal_path.append(current)
-        current = dp_path[i, current]
+@dataclass
+class SimulationResult:
+    trajectory: Trajectory
+    speed: Array
+    acceleration: Array
+    state: VehicleState
+    lap_time: float
+    feasible: bool
+    iterations: int
+    message: str
 
-    return optimal_path
 
-def visualize_racing_line(center_x, center_y, left_x, left_y, right_x, right_y, optimal_path, track_width):
-    """
-    Visualize the cones, centerline, and fastest racing line.
-    
-    Parameters:
-    - center_x, center_y: Coordinates of the track centerline.
-    - left_x, left_y: Coordinates of the left cones.
-    - right_x, right_y: Coordinates of the right cones.
-    - optimal_path: Optimal racing line as a list of indices.
-    - track_width: Discretized width of the track.
-    """
-    plt.figure(figsize=(12, 8))
-    plt.plot(left_x, left_y, label="Left Cones", color="blue")
-    plt.plot(right_x, right_y, label="Right Cones", color="green")
-    plt.plot(center_x, center_y, label="Centerline", color="gray", linestyle="--")
-    
-    def offset_fraction(index: int) -> float:
-        return (index - track_width // 2) / track_width
+# 2. Static calculations
 
-    racing_line_x = [
-        center_x[i] + offset_fraction(path) * (right_x[i] - left_x[i])
-        for i, path in enumerate(optimal_path)
-    ]
-    racing_line_y = [
-        center_y[i] + offset_fraction(path) * (right_y[i] - left_y[i])
-        for i, path in enumerate(optimal_path)
-    ]
-    plt.plot(racing_line_x, racing_line_y, label="Fastest Racing Line", color="red")
-    
-    plt.title("Fastest Racing Line - Dynamic Programming")
-    plt.xlabel("X")
-    plt.ylabel("Y")
-    plt.legend()
-    plt.grid()
-    plt.show()
+# 3. Dynamic calculations
 
-# Main
-left_x, left_y = left_cones['x'].values, left_cones['y'].values
-right_x, right_y = right_cones['x'].values, right_cones['y'].values
+# 4. Track processing and racing-line generation
 
-center_x, center_y = generate_centerline(left_x, left_y, right_x, right_y)
+# 5. Optimization
 
-curvature = calculate_curvature(center_x, center_y)
+# 6. Visualization and printed output
 
-# settings:
-track_width = 10  # resolution
-max_velocity = 50  # Max Speed(m/s)
-max_lateral_acceleration = 10  # Maxi acceleration(m/s²)
-optimal_path = find_fastest_racing_line(
-    center_x,
-    center_y,
-    curvature,
-    left_x,
-    left_y,
-    right_x,
-    right_y,
-    track_width,
-    max_velocity,
-    max_lateral_acceleration,
-)
-
-visualize_racing_line(center_x, center_y, left_x, left_y, right_x, right_y, optimal_path, track_width)
+# 7. Main execution
