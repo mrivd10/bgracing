@@ -12,7 +12,7 @@ from optimal.optimal import (
     tire_force_limits, friction_utilization, motor_torque, slip_angles,
     allocate_longitudinal_force, evaluate_vehicle_state, validate_configuration,
     load_track, generate_trajectory, calculate_speed_profile, validate_speed_profile,
-    optimize_racing_line, has_self_intersection,
+    optimize_racing_line, has_self_intersection, boundaries_cross,
 )
 
 
@@ -105,6 +105,10 @@ class PhysicsTests(unittest.TestCase):
             with self.subTest(invalid=invalid):
                 with self.assertRaises(ValueError):
                     validate_configuration(invalid, SolverSettings())
+        for settings in (replace(SolverSettings(), start_speed=np.nan),
+                         replace(SolverSettings(), speed_reserve=1.)):
+            with self.assertRaises(ValueError):
+                validate_configuration(p, settings)
         loads = normal_loads(np.array([10.]), 0., 0., p)
         steering, slip, beta = slip_angles(np.array([10.]), np.array([0.]), np.zeros((1, 4)), loads, p)
         np.testing.assert_allclose(steering, 0.)
@@ -170,6 +174,8 @@ class PhysicsTests(unittest.TestCase):
             generate_trajectory(track, np.zeros(8), wide, settings)
         crossing = np.array([[0., 0.], [2., 2.], [0., 2.], [2., 0.]])
         self.assertTrue(has_self_intersection(crossing, False))
+        self.assertTrue(boundaries_cross(np.array([[0., 0.], [2., 2.]]),
+                                         np.array([[0., 2.], [2., 0.]]), False))
         with tempfile.TemporaryDirectory() as temporary:
             csv = Path(temporary)/"track.csv"
             csv.write_text("x,y,side\n0,4,left\n10,4,left\n20,4,left\n30,4,left\n"
