@@ -275,6 +275,20 @@ def normal_loads(speed: Array | float, longitudinal_acceleration: Array | float,
     rear_transfer = (geometric_rear + (1-vehicle.front_roll_fraction)*elastic) / vehicle.rear_track
     return loads + np.stack((-front_transfer, front_transfer, -rear_transfer, rear_transfer), axis=-1)
 
+def tire_force_limits(loads: Array, vehicle: VehicleParameters) -> Array:
+    """Return (..., wheel, [Fx_max, Fy_max]) in N with sublinear load sensitivity.
+
+    Negative/unloaded tires have zero capacity solely to keep diagnostics finite;
+    the state evaluator separately rejects negative loads and wheel unloading.
+    """
+    loads = np.asarray(loads, dtype=float)
+    if not np.all(np.isfinite(loads)):
+        raise ValueError("Normal loads must be finite")
+    effective = vehicle.tire_reference_load * (
+        np.maximum(loads, 0) / vehicle.tire_reference_load)**(1-vehicle.tire_load_sensitivity)
+    return (effective[..., None] * vehicle.grip_safety_factor
+            * np.array([vehicle.mu_longitudinal, vehicle.mu_lateral]))
+
 # 4. Track processing and racing-line generation
 
 # 5. Optimization
