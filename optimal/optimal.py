@@ -343,6 +343,46 @@ def slip_angles(speed: Array, curvature: Array, lateral_force: Array, loads: Arr
     tire_slip = steering - np.arctan2(vy, vx)
     return steering, tire_slip, beta
 
+def allocate_longitudinal_force(request: Array, wheel_speed: Array, lateral_force: Array,
+                                capacity: Array, vehicle: VehicleParameters) -> dict[str, Array]:
+    """Fixed axle split, equal L/R forces; conservative extension point for QP allocation.
+
+    Torque-vectoring yaw = sum(-y_i*Fx_i), using each axle's actual track width.
+    Equal L/R commands avoid a spurious yaw demand for a centered CG; no claim
+    of optimal allocation. Battery limits apply to ELECTRICAL power.
+    """
+    motors = (vehicle.front_left, vehicle.front_right, vehicle.rear_left, vehicle.rear_right)
+    omega = np.maximum(wheel_speed, 0) / vehicle.rolling_radius
+    drive = np.stack([motor_torque(omega[..., i], m) for i, m in enumerate(motors)], axis=-1)
+    regen = np.stack([motor_torque(omega[..., i], m, True) for i, m in enumerate(motors)], axis=-1)
+    drive /= vehicle.rolling_radius
+    regen /= vehicle.rolling_radius
+    efficiency = np.array([m.efficiency for m in motors])
+    regen = np.where(wheel_speed >= vehicle.regen_minimum_speed, regen, 0.0)
+    regen_power = np.sum(regen*wheel_speed*efficiency, axis=-1)
+    regen *= np.minimum(1.0, vehicle.battery_regen_power/np.maximum(regen_power, EPS))[..., None]
+    lateral_ratio = np.abs(lateral_force) / np.maximum(capacity[..., 1], EPS)
+    remaining = capacity[..., 0] * np.maximum(
+        0., 1-lateral_ratio**vehicle.friction_exponent)**(1/vehicle.friction_exponent)
+    braking = request < 0
+    fraction = np.where(braking, vehicle.front_brake_bias, vehicle.front_drive_fraction)
+    weights = np.stack((fraction/2, fraction/2, (1-fraction)/2, (1-fraction)/2), axis=-1)
+    brake_capacity = vehicle.mechanical_brake_torque/vehicle.rolling_radius + regen
+    limits = np.minimum(remaining, np.where(braking[..., None], brake_capacity, drive))
+    requested = request[..., None]*weights
+    maximum_total = np.min(limits / weights, axis=-1)
+    electrical_per_force = np.sum(weights*wheel_speed/efficiency, axis=-1)
+    maximum_total = np.where(braking, maximum_total, np.minimum(
+        maximum_total, vehicle.battery_power/np.maximum(electrical_per_force, EPS)))
+    actual = np.sign(request)[..., None]*np.minimum(np.abs(request), maximum_total)[..., None]*weights
+    used_regen = np.minimum(np.maximum(-actual, 0), regen)
+    power = np.sum(np.maximum(actual, 0)*wheel_speed/efficiency, axis=-1)
+    charge = np.sum(used_regen*wheel_speed*efficiency, axis=-1)
+    y = static_vehicle_properties(vehicle)["wheel_positions"][:, 1]
+    yaw = -np.sum(y*actual, axis=-1)
+    return {"requested": requested, "actual": actual, "battery_power": power,
+            "regen_power": charge, "yaw_moment": yaw, "limits": limits}
+
 # 4. Track processing and racing-line generation
 
 # 5. Optimization
