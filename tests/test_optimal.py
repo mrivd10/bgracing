@@ -180,4 +180,23 @@ class PhysicsTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_track(csv, settings)
 
+    def test_body_force_and_yaw_equilibrium(self):
+        p = VehicleParameters()
+        speed = np.array([10., 18.])
+        curvature = np.array([.01, -.02])
+        acceleration = np.array([1., -2.])
+        gradient = np.array([.0001, -.0002])
+        state = evaluate_vehicle_state(speed, curvature, acceleration, p, gradient)
+        self.assertTrue(np.all(state.feasible))
+        cosine, sine = np.cos(state.steering), np.sin(state.steering)
+        fx = state.actual_force[..., 0]*cosine-state.actual_force[..., 1]*sine
+        fy = state.actual_force[..., 0]*sine+state.actual_force[..., 1]*cosine
+        drag = aerodynamic_forces(speed, p)[1]
+        np.testing.assert_allclose(fx.sum(axis=-1), p.mass*acceleration+drag, atol=.001)
+        np.testing.assert_allclose(fy.sum(axis=-1), p.mass*speed**2*curvature, atol=.001)
+        position = static_vehicle_properties(p)["wheel_positions"]
+        yaw = np.sum(position[:, 0]*fy-position[:, 1]*fx, axis=-1)
+        np.testing.assert_allclose(yaw, p.yaw_inertia*(acceleration*curvature+speed**2*gradient), atol=.001)
+        self.assertTrue(np.all(friction_utilization(state.actual_force, state.available_force) <= 1.+1e-8))
+
     # More physics tests
