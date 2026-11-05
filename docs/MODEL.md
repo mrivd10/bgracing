@@ -126,8 +126,11 @@ entry/exit caps are gates rather than walls. Vehicle length and its centered
 bounding footprint are assumptions to replace with an actual body envelope.
 
 Local cornering ceilings are found using speed-dependent force feasibility.
-Forward acceleration and backward braking passes iterate the load/grip/motor
-constraints. The last-to-first segment participates in every closed-track pass.
+A configurable speed grid at every station samples the coupled load/grip/motor
+acceleration and braking envelopes. Forward/backward steps interpolate these
+limits at their current speed, rather than retaining limits from an earlier
+high-speed guess. Dense physical validation checks interpolation error. The
+last-to-first segment participates in every closed-track pass.
 Each segment uses constant tangential acceleration, so v² is linear in distance
 and its time is 2 ds/(v_start+v_end), including launch from rest.
 
