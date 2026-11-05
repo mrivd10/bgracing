@@ -582,6 +582,19 @@ def load_track(path: str | Path, settings: SolverSettings,
     for points in (left_raw, right_raw):
         if has_self_intersection(points, closed):
             raise ValueError("Boundary self-intersects; repair source ordering explicitly")
+    paired = validated_cone_pairs(left_raw, right_raw, closed, settings.interpolation_resolution)
+    if paired is not None:
+        left, right = paired
+        center = (left+right)/2
+        if has_self_intersection(center, closed):
+            raise ValueError("Paired centerline self-intersects")
+        length = float(np.linalg.norm(np.diff(center, axis=0), axis=1).sum())
+        if closed:
+            length += float(np.linalg.norm(center[-1]-center[0]))
+        notes.append("Original row pairs verified: transverse alignment, side orientation, no connector crossings.")
+        return Track(left, right, center,
+                     np.linspace(0., 1., len(center), endpoint=not closed),
+                     closed, length, tuple(notes))
     left = interpolate_boundary(left_raw, settings.interpolation_resolution, closed)
     right = interpolate_boundary(right_raw, settings.interpolation_resolution, closed)
     tangent = np.roll(left, -1, axis=0)-np.roll(left, 1, axis=0) if closed else np.gradient(left, axis=0)
