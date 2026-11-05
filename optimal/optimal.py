@@ -1092,4 +1092,44 @@ def save_results(result: SimulationResult, baseline: SimulationResult, track: Tr
             validation[f"available_{component}_{wheel}_N"] = result.state.available_force[:, i, j]
     pd.DataFrame(validation).to_csv(output/"constraint_validation.csv", index=False)
 
+def main(argv: list[str] | None = None) -> int:
+    """Run the optimizer without import side effects or a required GUI display."""
+    import hashlib
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--track", type=Path, default=Path(__file__).resolve().parents[1]/"BrandsHatchLayout.csv")
+    parser.add_argument("--topology", choices=("auto", "open", "closed"), default="auto")
+    parser.add_argument("--output", type=Path, default=Path("output"))
+    parser.add_argument("--samples", type=int, default=180)
+    parser.add_argument("--controls", type=int, default=12)
+    parser.add_argument("--sweeps", type=int, default=2)
+    parser.add_argument("--lateral-candidates", type=int, default=7)
+    parser.add_argument("--start-speed", type=float, default=0.)
+    parser.add_argument("--finish-speed", type=float)
+    parser.add_argument("--quick", action="store_true", help="120 samples, 8 controls, 3 candidates, one sweep")
+    parser.add_argument("--show", action="store_true", help="Optional interactive display")
+    arguments = parser.parse_args(argv)
+    vehicle = VehicleParameters()
+    settings = SolverSettings(longitudinal_samples=arguments.samples, control_points=arguments.controls,
+                              optimization_sweeps=arguments.sweeps, lateral_candidates=arguments.lateral_candidates,
+                              start_speed=arguments.start_speed, finish_speed=arguments.finish_speed)
+    if arguments.quick:
+        settings = replace(settings, longitudinal_samples=120, control_points=8,
+                           lateral_candidates=3, optimization_sweeps=1)
+    validate_configuration(vehicle, settings)
+    digest = hashlib.sha256(arguments.track.read_bytes()).hexdigest()
+    track = load_track(arguments.track, settings, arguments.topology)
+    print("SIMULATION ESTIMATE using ASSUMED vehicle parameters", flush=True)
+    for note in track.notes:
+        print(note, flush=True)
+    result, baseline, controls, evaluations = optimize_racing_line(track, vehicle, settings)
+    summary = simulation_summary(result, baseline, track, vehicle, evaluations)
+    summary["source_csv_sha256"] = digest
+    save_results(result, baseline, track, vehicle, settings, controls, summary, arguments.output, arguments.show)
+    print(json.dumps(summary, indent=2, allow_nan=False))
+    print(f"Saved plots, configuration, speed profile and constraint checks to {arguments.output.resolve()}")
+    if hashlib.sha256(arguments.track.read_bytes()).hexdigest() != digest:
+        raise RuntimeError("Source CSV changed during execution")
+    return 0 if result.feasible else 1
+
 # 7. Main execution
