@@ -823,6 +823,47 @@ def cornering_speed_limits(trajectory: Trajectory, vehicle: VehicleParameters,
         high = np.where(valid, high, middle)
     return low
 
+def validate_speed_profile(trajectory: Trajectory, speed: Array, vehicle: VehicleParameters,
+                           settings: SolverSettings) -> tuple[Array, Array, Array, VehicleState, Array]:
+    """Check segment endpoints from BOTH sides and dense spline-interior states.
+
+    Constant tangential acceleration on each segment gives linear v^2(s).
+    Both sides of a speed knot are checked because acceleration may jump there.
+    Includes the closing segment and the same start/finish speed for circuits.
+    """
+    speed = np.asarray(speed, float)
+    if speed.shape != trajectory.distance.shape or not np.all(np.isfinite(speed)) or np.any(speed < 0):
+        raise ValueError("Speed profile must match trajectory and be finite/nonnegative")
+    count = len(trajectory.segment_length)
+    following = np.roll(speed, -1) if trajectory.closed else speed[1:]
+    starting = speed[:count]
+    acceleration = (following**2-starting**2)/(2*trajectory.segment_length)
+    fractions = np.linspace(0., 1., settings.constraint_substeps+1)
+    distance = (trajectory.distance[:count, None]
+                +trajectory.segment_length[:, None]*fractions).ravel()
+    segments = np.repeat(np.arange(count), len(fractions))
+    dense_distance = trajectory.geometry_distance
+    dense_segment = np.minimum(np.searchsorted(trajectory.distance, dense_distance, side="right")-1, count-1)
+    distance = np.r_[distance, dense_distance]
+    segments = np.r_[segments, dense_segment]
+    order = np.argsort(distance, kind="stable")
+    distance, segments = distance[order], segments[order]
+    local = distance-trajectory.distance[segments]
+    squared_speed = starting[segments]**2+2*acceleration[segments]*local
+    check_speed = np.sqrt(np.maximum(squared_speed, 0.))
+    parameter = np.interp(distance, trajectory.geometry_distance, trajectory.geometry_parameter)
+    first = trajectory.spline(parameter, 1)
+    second = trajectory.spline(parameter, 2)
+    third = trajectory.spline(parameter, 3)
+    norm = np.linalg.norm(first, axis=1)
+    numerator = first[:, 0]*second[:, 1]-first[:, 1]*second[:, 0]
+    curvature = numerator/np.maximum(norm**3, EPS)
+    derivative = first[:, 0]*third[:, 1]-first[:, 1]*third[:, 0]
+    gradient = (derivative/np.maximum(norm**3, EPS)
+                -3*numerator*np.sum(first*second, axis=1)/np.maximum(norm**5, EPS))/np.maximum(norm, EPS)
+    state = evaluate_vehicle_state(check_speed, curvature, acceleration[segments], vehicle, gradient)
+    return acceleration, distance, acceleration[segments], state, segments
+
 # 6. Visualization and printed output
 
 # 7. Main execution
