@@ -458,6 +458,27 @@ def evaluate_vehicle_state(speed: Array | float, curvature: Array | float,
                         allocation["battery_power"], allocation["regen_power"],
                         yaw, steering, tire_slip, lift, valid)
 
+def longitudinal_limits(speed: Array, curvature: Array, gradient: Array,
+                        vehicle: VehicleParameters, settings: SolverSettings) -> tuple[Array, Array]:
+    """Find connected feasible acceleration/braking intervals about steady speed.
+
+    A finite bracket is a conservative numerical cap, not an asserted physical
+    maximum. The full force/load/motor model is re-evaluated during bisection.
+    """
+    speed, curvature, gradient = np.broadcast_arrays(speed, curvature, gradient)
+    steady = evaluate_vehicle_state(speed, curvature, 0., vehicle, gradient).feasible
+    limits = []
+    for sign in (1., -1.):
+        low = np.zeros_like(speed)
+        high = np.full_like(speed, settings.acceleration_search_limit)
+        for _ in range(settings.bisection_iterations):
+            mid = (low+high)/2
+            feasible = evaluate_vehicle_state(speed, curvature, sign*mid, vehicle, gradient).feasible & steady
+            low = np.where(feasible, mid, low)
+            high = np.where(feasible, high, mid)
+        limits.append(sign*low)
+    return limits[0], limits[1]
+
 # 4. Track processing and racing-line generation
 
 # 5. Optimization
