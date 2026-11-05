@@ -250,6 +250,31 @@ def aerodynamic_forces(speed: Array | float, vehicle: VehicleParameters) -> tupl
                      + [(1-vehicle.aero_front_fraction)/2]*2)
     return pressure[..., None] * vehicle.downforce_area * split, pressure * vehicle.drag_area
 
+def normal_loads(speed: Array | float, longitudinal_acceleration: Array | float,
+                 lateral_acceleration: Array | float, vehicle: VehicleParameters) -> Array:
+    """Estimate Fz without clipping negative loads (callers must reject them).
+
+    Positive acceleration moves load rearward; a left turn loads right tires.
+    Geometric roll moments plus the elastic remainder sum to m*ay*h exactly.
+    Each axle transfer is SUBTRACTED from one wheel and ADDED to the other.
+    Drag acts at CG height; downforce balance is specified at the ground axles.
+    """
+    speed, ax, ay = np.broadcast_arrays(speed, longitudinal_acceleration, lateral_acceleration)
+    if not np.all(np.isfinite(ax)) or not np.all(np.isfinite(ay)):
+        raise ValueError("Accelerations must be finite")
+    static = static_vehicle_properties(vehicle)
+    aero, drag = aerodynamic_forces(speed, vehicle)
+    loads = static["corner_loads"] + aero
+    pitch = (vehicle.mass * ax + drag) * vehicle.cg_z / vehicle.wheelbase
+    loads = loads + pitch[..., None] * np.array([-0.5, -0.5, 0.5, 0.5])
+    front_fraction = static["axle_loads"][0] / (vehicle.mass * vehicle.gravity)
+    geometric_front = vehicle.mass * ay * front_fraction * vehicle.front_roll_center
+    geometric_rear = vehicle.mass * ay * (1-front_fraction) * vehicle.rear_roll_center
+    elastic = vehicle.mass * ay * vehicle.cg_z - geometric_front - geometric_rear
+    front_transfer = (geometric_front + vehicle.front_roll_fraction*elastic) / vehicle.front_track
+    rear_transfer = (geometric_rear + (1-vehicle.front_roll_fraction)*elastic) / vehicle.rear_track
+    return loads + np.stack((-front_transfer, front_transfer, -rear_transfer, rear_transfer), axis=-1)
+
 # 4. Track processing and racing-line generation
 
 # 5. Optimization
